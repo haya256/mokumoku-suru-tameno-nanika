@@ -32,7 +32,16 @@ python server.py
 
 ### Discord 連携（任意）
 
-環境変数に Webhook URL を設定する。
+#### Webhook URL の取得手順
+
+1. Discord で通知を送りたいチャンネルを右クリック → **「チャンネルの編集」**
+2. **「連携サービス」** タブを開く
+3. **「ウェブフック」** → **「新しいウェブフック」** をクリック
+4. 名前を設定し、**「ウェブフック URL をコピー」** をクリック
+
+> 開発者モードや Bot の登録は不要です。
+
+#### 環境変数に設定して起動
 
 ```bash
 export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
