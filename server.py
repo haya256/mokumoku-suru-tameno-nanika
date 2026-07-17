@@ -65,40 +65,50 @@ def post_message():
     }
     messages.append(msg)
     post_to_discord(f"**{name}**: {text}")
-
-    task = data.get("task", "").strip()
-    if task:
-        start = data.get("start", "").strip() or datetime.now().strftime("%H:%M")
-        end = data.get("end", "").strip()
-        is_new = name not in board
-        if is_new:
-            used = {e["room"] for e in board.values()}
-            free = [r for r in range(1, ROOM_COUNT + 1) if r not in used]
-            if not free:
-                return jsonify({**msg, "roomFull": True}), 201
-            room = random.choice(free)
-            pose = random.randint(0, 2)
-        else:
-            room = board[name]["room"]
-            pose = board[name]["pose"]
-        board[name] = {"name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose}
-        if is_new:
-            until = f"〜{end}" if end else "〜"
-            add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
-
     return jsonify(msg), 201
 
 @app.route("/board", methods=["GET"])
 def get_board():
     return jsonify(list(board.values()))
 
-@app.route("/board/end", methods=["POST"])
-def end_board():
+# board はクライアントID(ブラウザごとに固定)をキーに持つ。名前は表示用で変更可
+@app.route("/board/join", methods=["POST"])
+def join_board():
     data = request.get_json()
+    cid = (data.get("id") or "").strip()
     name = (data.get("name") or "").strip()
-    entry = board.pop(name, None)
+    task = (data.get("task") or "").strip()
+    if not cid or not name or not task:
+        return jsonify({"error": "id, name and task required"}), 400
+    start = (data.get("start") or "").strip() or datetime.now().strftime("%H:%M")
+    end = (data.get("end") or "").strip()
+    is_new = cid not in board
+    if is_new:
+        used = {e["room"] for e in board.values()}
+        free = [r for r in range(1, ROOM_COUNT + 1) if r not in used]
+        if not free:
+            return jsonify({"roomFull": True}), 200
+        room = random.choice(free)
+        pose = random.randint(0, 2)
+    else:
+        room = board[cid]["room"]
+        pose = board[cid]["pose"]
+        old_name = board[cid]["name"]
+        if old_name != name:
+            add_system_message(f"✏️ {old_name} が {name} に名前を変更")
+    board[cid] = {"id": cid, "name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose}
+    if is_new:
+        until = f"〜{end}" if end else "〜"
+        add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
+    return jsonify(board[cid]), 201
+
+@app.route("/board/leave", methods=["POST"])
+def leave_board():
+    data = request.get_json()
+    cid = (data.get("id") or "").strip()
+    entry = board.pop(cid, None)
     if entry:
-        add_system_message(f"🔴 {name} がルーム{entry['room']}から退室")
+        add_system_message(f"🔴 {entry['name']} がルーム{entry['room']}から退室")
     return jsonify({"ok": True})
 
 if __name__ == "__main__":

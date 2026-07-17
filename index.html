@@ -276,13 +276,31 @@
 
     button:hover { background: #555; }
 
-    #endBtn {
+    #joinBtn {
+      background: #2a7;
+      flex-shrink: 0;
+    }
+
+    #joinBtn:hover { background: #3b8; }
+
+    #editBtn { flex-shrink: 0; }
+
+    #leaveBtn {
       background: #fff;
       color: #c33;
       border: 1px solid #c33;
+      flex-shrink: 0;
     }
 
-    #endBtn:hover { background: #fee; }
+    #leaveBtn:hover { background: #fee; }
+
+    #myStatus {
+      flex: 1;
+      font-size: 0.9rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -298,17 +316,22 @@
   </div>
   <div id="messages"></div>
   <form id="form">
-    <div class="row">
+    <div class="row" id="joinRow">
+      <input id="name" type="text" placeholder="名前">
       <input id="task" type="text" placeholder="もくもくする内容(ボードに載ります)">
       <label for="start">開始</label>
       <input id="start" type="time">
       <label for="end">終了予定</label>
       <input id="end" type="time">
-      <button type="button" id="endBtn">終わる</button>
+      <button type="button" id="joinBtn">入室</button>
     </div>
-    <div class="row">
-      <input id="name" type="text" placeholder="名前" required>
-      <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1" required></textarea>
+    <div class="row" id="statusRow" style="display: none;">
+      <span id="myStatus"></span>
+      <button type="button" id="editBtn">編集</button>
+      <button type="button" id="leaveBtn">退室</button>
+    </div>
+    <div class="row" id="chatRow" style="display: none;">
+      <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
       <button type="submit">送信</button>
     </div>
   </form>
@@ -323,7 +346,25 @@
     const taskEl = document.getElementById("task");
     const startEl = document.getElementById("start");
     const endEl = document.getElementById("end");
-    const endBtn = document.getElementById("endBtn");
+    const joinRow = document.getElementById("joinRow");
+    const statusRow = document.getElementById("statusRow");
+    const chatRow = document.getElementById("chatRow");
+    const myStatusEl = document.getElementById("myStatus");
+    const joinBtn = document.getElementById("joinBtn");
+    const editBtn = document.getElementById("editBtn");
+    const leaveBtn = document.getElementById("leaveBtn");
+
+    let editing = false;
+    let lastEntries = [];
+    nameEl.value = localStorage.getItem("mokumoku-name") || "";
+
+    // 本人識別用ID(ブラウザごとに固定)。名前は表示用なので変更しても別人にならない
+    // ※crypto.randomUUIDはLAN経由のhttpアクセス(非セキュアコンテキスト)では使えないため自前生成
+    let clientId = localStorage.getItem("mokumoku-id");
+    if (!clientId) {
+      clientId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem("mokumoku-id", clientId);
+    }
     const roomOverlayEl = document.getElementById("roomOverlay");
 
     const ROOM_COUNT = 9;
@@ -384,7 +425,9 @@
     }
 
     function renderBoard(entries) {
+      lastEntries = entries;
       renderRooms(entries);
+      updateMyStatus();
       if (entries.length === 0) {
         entriesEl.innerHTML = `<div class="empty">まだ誰ももくもくしていません</div>`;
         return;
@@ -397,13 +440,27 @@
         div.innerHTML = `<span class="room">Room ${e.room}</span><span class="who">${esc(e.name)}</span><span class="when">${when}</span><span class="what">${esc(e.task)}</span>`;
         entriesEl.appendChild(div);
       });
+    }
 
-      // リロード後の復元: 自分のエントリがあってフィールドが空ならプリフィル
-      const mine = entries.find(e => e.name === nameEl.value.trim());
-      if (mine && !taskEl.value && !startEl.value && !endEl.value) {
-        taskEl.value = mine.task;
-        startEl.value = mine.start;
-        endEl.value = mine.end;
+    // 入室状態に応じてフォームを切替:
+    //   入室前     → 入室フォームのみ(チャット不可)
+    //   入室中     → ステータス+編集/退室ボタン+チャット
+    //   編集モード → 入室フォーム(ボタンは「更新」)+チャット
+    function updateMyStatus() {
+      const mine = lastEntries.find(e => e.id === clientId);
+      if (mine) {
+        const until = mine.end ? `〜${mine.end}` : "〜";
+        myStatusEl.textContent = `🟢 ${mine.name}: ルーム${mine.room}でもくもく中(${mine.start}${until}): ${mine.task}`;
+        joinRow.style.display = editing ? "flex" : "none";
+        statusRow.style.display = editing ? "none" : "flex";
+        chatRow.style.display = "flex";
+        joinBtn.textContent = "更新";
+      } else {
+        editing = false;
+        joinRow.style.display = "flex";
+        statusRow.style.display = "none";
+        chatRow.style.display = "none";
+        joinBtn.textContent = "入室";
       }
     }
 
@@ -446,32 +503,67 @@
       const name = nameEl.value.trim();
       const text = textEl.value.trim();
       if (!name || !text) return;
-      const res = await fetch("/messages", {
+      await fetch("/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name, text,
-          task: taskEl.value.trim(),
-          start: startEl.value,
-          end: endEl.value,
-        }),
+        body: JSON.stringify({ name, text }),
       });
-      const result = await res.json();
-      if (result.roomFull) {
-        alert("満室です。空きが出るまでお待ちください");
-      }
       textEl.value = "";
       textEl.style.height = "auto";
       await poll();
     });
 
-    endBtn.addEventListener("click", async () => {
+    joinBtn.addEventListener("click", async () => {
       const name = nameEl.value.trim();
-      if (!name) return;
-      await fetch("/board/end", {
+      const task = taskEl.value.trim();
+      if (!name) { alert("名前を入力してください"); nameEl.focus(); return; }
+      if (!task) { alert("もくもくする内容を入力してください"); taskEl.focus(); return; }
+      const res = await fetch("/board/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ id: clientId, name, task, start: startEl.value, end: endEl.value }),
+      });
+      const result = await res.json();
+      if (result.roomFull) {
+        alert("満室です。空きが出るまでお待ちください");
+        return;
+      }
+      localStorage.setItem("mokumoku-name", name);
+      const wasEditing = editing;
+      editing = false;
+      // 新規入室時は挨拶メッセージを規定値としてセット
+      if (!wasEditing && !textEl.value) {
+        textEl.value = `${task}でもくもくします`;
+      }
+      await poll();
+      textEl.focus();
+    });
+
+    editBtn.addEventListener("click", () => {
+      const mine = lastEntries.find(e => e.id === clientId);
+      if (!mine) return;
+      editing = true;
+      nameEl.value = mine.name;
+      taskEl.value = mine.task;
+      startEl.value = mine.start;
+      endEl.value = mine.end;
+      updateMyStatus();
+      taskEl.focus();
+    });
+
+    // 入室フォームでEnterを押したら入室(IME変換確定は除く)
+    [nameEl, taskEl].forEach(el => el.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        joinBtn.click();
+      }
+    }));
+
+    leaveBtn.addEventListener("click", async () => {
+      await fetch("/board/leave", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: clientId }),
       });
       taskEl.value = "";
       startEl.value = "";
