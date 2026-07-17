@@ -1,4 +1,5 @@
 import os
+import random
 import urllib.request
 import json as _json
 from flask import Flask, request, jsonify, send_from_directory
@@ -7,6 +8,7 @@ from datetime import datetime
 app = Flask(__name__)
 messages = []
 board = {}
+ROOM_COUNT = 9
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def post_to_discord(content):
@@ -37,6 +39,15 @@ def add_system_message(text):
 def index():
     return send_from_directory(".", "index.html")
 
+@app.route("/room-image.png")
+def room_image():
+    return send_from_directory("data", "room-image-1.png")
+
+@app.route("/chara-image.png")
+def chara_image():
+    # 元画像(chara-image-1.png)の市松模様背景を透明化したもの。再生成は data/make_alpha.py
+    return send_from_directory("data", "chara-image-alpha.png")
+
 @app.route("/messages", methods=["GET"])
 def get_messages():
     return jsonify(messages)
@@ -61,10 +72,18 @@ def post_message():
         start = data.get("start", "").strip() or datetime.now().strftime("%H:%M")
         end = data.get("end", "").strip()
         is_new = name not in board
-        board[name] = {"name": name, "start": start, "end": end, "task": task}
+        if is_new:
+            used = {e["room"] for e in board.values()}
+            free = [r for r in range(1, ROOM_COUNT + 1) if r not in used]
+            if not free:
+                return jsonify({**msg, "roomFull": True}), 201
+            room = random.choice(free)
+        else:
+            room = board[name]["room"]
+        board[name] = {"name": name, "start": start, "end": end, "task": task, "room": room}
         if is_new:
             until = f"〜{end}" if end else "〜"
-            add_system_message(f"🟢 {name} がもくもく開始({start}{until}): {task}")
+            add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
 
     return jsonify(msg), 201
 
@@ -76,8 +95,9 @@ def get_board():
 def end_board():
     data = request.get_json()
     name = (data.get("name") or "").strip()
-    if board.pop(name, None):
-        add_system_message(f"🔴 {name} がもくもく終了")
+    entry = board.pop(name, None)
+    if entry:
+        add_system_message(f"🔴 {name} がルーム{entry['room']}から退室")
     return jsonify({"ok": True})
 
 if __name__ == "__main__":
