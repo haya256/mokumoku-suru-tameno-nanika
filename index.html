@@ -349,12 +349,8 @@
     let lastRoomState = "";
 
     function renderRooms(entries) {
-      const occupants = entries.map(e => {
-        // ポーズは2〜5分ごとに切替(部屋ごとに周期をずらす)
-        const periodMs = (120 + (e.room * 7919) % 181) * 1000;
-        const pose = (Math.floor(Date.now() / periodMs) + e.room) % 6;
-        return { room: e.room, name: e.name, task: e.task, pose };
-      });
+      // ポーズ(0〜2)は入室時にサーバーが決めて退室まで固定
+      const occupants = entries.map(e => ({ room: e.room, name: e.name, task: e.task, pose: e.pose || 0 }));
       // 変化がなければDOMを触らない(作り直すとCSSアニメーションがリセットされるため)
       const state = JSON.stringify(occupants);
       if (state === lastRoomState) return;
@@ -365,8 +361,8 @@
         if (!cell) return;
         const chara = document.createElement("div");
         chara.className = "chara";
-        const col = ((o.room - 1) % 3) * 3 + (o.pose % 3);
-        const row = Math.floor((o.room - 1) / 3) * 2 + Math.floor(o.pose / 3);
+        const col = ((o.room - 1) % 3) * 3 + o.pose;
+        const row = Math.floor((o.room - 1) / 3) * 2;
         chara.style.backgroundPosition = `${col / 8 * 100}% ${row / 5 * 100}%`;
         chara.style.animationDelay = `${(o.room * 0.3) % 2}s`;
         cell.appendChild(chara);

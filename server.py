@@ -77,9 +77,11 @@ def post_message():
             if not free:
                 return jsonify({**msg, "roomFull": True}), 201
             room = random.choice(free)
+            pose = random.randint(0, 2)
         else:
             room = board[name]["room"]
-        board[name] = {"name": name, "start": start, "end": end, "task": task, "room": room}
+            pose = board[name]["pose"]
+        board[name] = {"name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose}
         if is_new:
             until = f"〜{end}" if end else "〜"
             add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
