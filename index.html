@@ -190,6 +190,7 @@
     .msg .text {
       font-size: 0.95rem;
       word-break: break-word;
+      white-space: pre-wrap;
     }
 
     .msg.system {
@@ -239,7 +240,7 @@
       outline: none;
     }
 
-    input[type="text"] {
+    input[type="text"], textarea {
       border: 1px solid #ccc;
       border-radius: 6px;
       padding: 8px 10px;
@@ -247,8 +248,16 @@
       outline: none;
     }
 
-    input[type="text"]:focus {
+    input[type="text"]:focus, textarea:focus {
       border-color: #555;
+    }
+
+    textarea {
+      font-family: inherit;
+      line-height: 1.4;
+      resize: none;
+      max-height: 120px;
+      overflow-y: auto;
     }
 
     #name { width: 100px; flex-shrink: 0; }
@@ -299,7 +308,7 @@
     </div>
     <div class="row">
       <input id="name" type="text" placeholder="名前" required>
-      <input id="text" type="text" placeholder="コメント" required>
+      <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1" required></textarea>
       <button type="submit">送信</button>
     </div>
   </form>
@@ -418,6 +427,20 @@
       if (taskEl.value && !startEl.value) startEl.value = nowHHMM();
     });
 
+    // Enterで送信、Shift+Enterで改行(IME変換確定のEnterでは送信しない)
+    textEl.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    // 入力に合わせて高さを自動調整
+    textEl.addEventListener("input", () => {
+      textEl.style.height = "auto";
+      textEl.style.height = Math.min(textEl.scrollHeight, 120) + "px";
+    });
+
     form.addEventListener("submit", async e => {
       e.preventDefault();
       const name = nameEl.value.trim();
@@ -438,6 +461,7 @@
         alert("満室です。空きが出るまでお待ちください");
       }
       textEl.value = "";
+      textEl.style.height = "auto";
       await poll();
     });
 
