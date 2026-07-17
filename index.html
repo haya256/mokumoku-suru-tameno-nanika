@@ -39,11 +39,13 @@
     }
 
     .cell {
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: flex-end;
-      padding-bottom: 4%;
+      /* キャラ下端を部屋の高さの14%に保つ(バッジは絶対配置なので高さ分を足す) */
+      padding-bottom: calc(14% + 24px);
     }
 
     /* キャラクターのスプライトシート: 9列×6行。1キャラ=3列×2行(6ポーズ)のブロックが部屋と同じ3×3配置 */
@@ -63,6 +65,10 @@
     }
 
     .cell .badge {
+      position: absolute;
+      bottom: 5%;
+      left: 50%;
+      transform: translateX(-50%);
       background: rgba(0, 0, 0, 0.65);
       color: #fff;
       border-radius: 999px;
@@ -262,7 +268,7 @@
 
     #name { width: 100px; flex-shrink: 0; }
     #text { flex: 1; }
-    #task { flex: 1; }
+    #task { flex: 1; min-width: 0; }
 
     button {
       background: #333;
