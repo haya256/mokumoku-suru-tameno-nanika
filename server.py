@@ -41,12 +41,11 @@ def index():
 
 @app.route("/room-image.png")
 def room_image():
-    return send_from_directory("data", "room-image-1.png")
+    return send_from_directory("assets", "room-image-1.png")
 
 @app.route("/chara-image.png")
 def chara_image():
-    # 元画像(chara-image-1.png)の市松模様背景を透明化したもの。再生成は data/make_alpha.py
-    return send_from_directory("data", "chara-image-alpha.png")
+    return send_from_directory("assets", "chara-image-1.png")
 
 @app.route("/messages", methods=["GET"])
 def get_messages():
