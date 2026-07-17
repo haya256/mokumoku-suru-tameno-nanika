@@ -397,6 +397,10 @@
     let editing = false;
     let lastEntries = [];
     nameEl.value = localStorage.getItem("mokumoku-name") || "";
+    // 入室を待たず、名前欄の変更時点で即保存する
+    nameEl.addEventListener("input", () => {
+      localStorage.setItem("mokumoku-name", nameEl.value.trim());
+    });
 
     // 本人識別用ID(ブラウザごとに固定)。名前は表示用なので変更しても別人にならない
     // ※crypto.randomUUIDはLAN経由のhttpアクセス(非セキュアコンテキスト)では使えないため自前生成
@@ -568,7 +572,6 @@
         alert("満室です。空きが出るまでお待ちください");
         return;
       }
-      localStorage.setItem("mokumoku-name", name);
       recordRow.style.display = "none";
       const wasEditing = editing;
       editing = false;
