@@ -291,6 +291,30 @@
 
     #editBtn { flex-shrink: 0; }
 
+    #recordLabel {
+      font-size: 0.85rem;
+      color: #555;
+      flex-shrink: 0;
+    }
+
+    #recordText {
+      flex: 1;
+      min-width: 0;
+      background: #f8f8f8;
+      font-size: 0.85rem;
+    }
+
+    #copyBtn { flex-shrink: 0; }
+
+    #closeRecordBtn {
+      background: #fff;
+      color: #888;
+      border: 1px solid #ccc;
+      flex-shrink: 0;
+    }
+
+    #closeRecordBtn:hover { background: #eee; }
+
     #leaveBtn {
       background: #fff;
       color: #c33;
@@ -336,6 +360,12 @@
       <button type="button" id="editBtn">編集</button>
       <button type="button" id="leaveBtn">退室</button>
     </div>
+    <div class="row" id="recordRow" style="display: none;">
+      <span id="recordLabel">📋 今日の記録</span>
+      <input id="recordText" type="text" readonly>
+      <button type="button" id="copyBtn">コピー</button>
+      <button type="button" id="closeRecordBtn">✕</button>
+    </div>
     <div class="row" id="chatRow" style="display: none;">
       <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
       <button type="submit">送信</button>
@@ -359,6 +389,10 @@
     const joinBtn = document.getElementById("joinBtn");
     const editBtn = document.getElementById("editBtn");
     const leaveBtn = document.getElementById("leaveBtn");
+    const recordRow = document.getElementById("recordRow");
+    const recordText = document.getElementById("recordText");
+    const copyBtn = document.getElementById("copyBtn");
+    const closeRecordBtn = document.getElementById("closeRecordBtn");
 
     let editing = false;
     let lastEntries = [];
@@ -535,6 +569,7 @@
         return;
       }
       localStorage.setItem("mokumoku-name", name);
+      recordRow.style.display = "none";
       const wasEditing = editing;
       editing = false;
       // 新規入室時は挨拶メッセージを規定値としてセット
@@ -566,15 +601,36 @@
     }));
 
     leaveBtn.addEventListener("click", async () => {
-      await fetch("/board/leave", {
+      const res = await fetch("/board/leave", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: clientId }),
       });
+      const result = await res.json();
       taskEl.value = "";
       startEl.value = "";
       endEl.value = "";
+      if (result.record) {
+        recordText.value = result.record;
+        recordRow.style.display = "flex";
+      }
       await poll();
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      recordText.select();
+      let ok = false;
+      // LAN経由のhttp(非セキュアコンテキスト)ではclipboard APIが使えないためexecCommandにフォールバック
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(recordText.value); ok = true; } catch {}
+      }
+      if (!ok) ok = document.execCommand("copy");
+      copyBtn.textContent = ok ? "コピーしました" : "コピー失敗";
+      setTimeout(() => { copyBtn.textContent = "コピー"; }, 1500);
+    });
+
+    closeRecordBtn.addEventListener("click", () => {
+      recordRow.style.display = "none";
     });
 
     poll();

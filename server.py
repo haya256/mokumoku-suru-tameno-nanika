@@ -107,9 +107,19 @@ def leave_board():
     data = request.get_json()
     cid = (data.get("id") or "").strip()
     entry = board.pop(cid, None)
-    if entry:
-        add_system_message(f"🔴 {entry['name']} がルーム{entry['room']}から退室")
-    return jsonify({"ok": True})
+    if not entry:
+        return jsonify({"ok": True})
+    now = datetime.now()
+    end_str = now.strftime("%H:%M")
+    try:
+        h, m = map(int, entry["start"].split(":"))
+        minutes = (now.hour * 60 + now.minute - h * 60 - m) % (24 * 60)
+    except ValueError:
+        minutes = 0
+    # 人間可読かつ機械処理しやすい固定順の1行記録
+    record = f"{now.strftime('%Y-%m-%d')} | {entry['start']}〜{end_str} | {minutes}分 | {entry['task']}"
+    add_system_message(f"🔴 {entry['name']} がルーム{entry['room']}から退室")
+    return jsonify({"ok": True, "record": record})
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
