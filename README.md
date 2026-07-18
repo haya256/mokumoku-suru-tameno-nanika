@@ -108,6 +108,16 @@ ipconfig getifaddr en0   # Mac
 3. その下のエイリアス入力欄（Enter alias）に好きな名前を入れます（例: `mokumoku-0718`）。空欄のままだとランダムな文字列になります
 4. 「Shorten URL」ボタンを押すと短縮URLが発行されます。これを参加者に伝えます
 
+ブラウザを開かずに、ターミナルからコマンド一発で作ることもできます。2か所（トンネルのURLと好きな名前）を書き換えて実行してください。
+
+```bash
+curl -s -G "https://tinyurl.com/api-create.php" \
+  --data-urlencode "url=https://ほにゃらら.trycloudflare.com" \
+  --data-urlencode "alias=mokumoku-0718"
+```
+
+成功すると `https://tinyurl.com/mokumoku-0718` のような短縮URLがそのまま表示されます。`Error` と表示されたら、その名前は既に使われているので別の名前で試してください。
+
 知っておいてほしいこと：
 
 - **一度作った短縮URLは削除できません**。同じ名前は二度と使えなくなるので、`mokumoku-0718` のように日付を入れるなど、毎回違う名前を付けるのがおすすめです
