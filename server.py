@@ -1,3 +1,4 @@
+import hmac
 import os
 import random
 import urllib.request
@@ -10,6 +11,38 @@ messages = []
 board = {}
 ROOM_COUNT = 9
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+SETTINGS_FILE = "config/settings.json"
+DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
+
+# 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return _json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"[settings] {SETTINGS_FILE} を読めないためデフォルト(mode=very_easy)で動作: {e}")
+        return {}
+
+# セキュリティモード(デフォルト: very_easy):
+#   none      … 認証なし(閲覧・書き込みとも自由)
+#   very_easy … 閲覧は自由。書き込み系(投稿/入室/退室)は部屋共通の合言葉が必要。
+#               ただし合言葉ファイルが未設置(または空)の間は認証なしで通す
+def check_passphrase(data):
+    security = load_settings().get("security", {})
+    if security.get("mode", "very_easy") != "very_easy":
+        return None
+    path = security.get("passphrase_file", DEFAULT_PASSPHRASE_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            expected = f.read().strip()
+    except OSError:
+        expected = ""
+    if not expected:
+        return None
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    if not hmac.compare_digest(supplied.encode(), expected.encode()):
+        return jsonify({"error": "wrong passphrase", "authRequired": True}), 401
+    return None
 
 def post_to_discord(content):
     if not DISCORD_WEBHOOK_URL:
@@ -54,6 +87,9 @@ def get_messages():
 @app.route("/messages", methods=["POST"])
 def post_message():
     data = request.get_json()
+    err = check_passphrase(data)
+    if err:
+        return err
     name = data.get("name", "").strip()
     text = data.get("text", "").strip()
     if not name or not text:
@@ -75,6 +111,9 @@ def get_board():
 @app.route("/board/join", methods=["POST"])
 def join_board():
     data = request.get_json()
+    err = check_passphrase(data)
+    if err:
+        return err
     cid = (data.get("id") or "").strip()
     name = (data.get("name") or "").strip()
     task = (data.get("task") or "").strip()
@@ -105,6 +144,9 @@ def join_board():
 @app.route("/board/leave", methods=["POST"])
 def leave_board():
     data = request.get_json()
+    err = check_passphrase(data)
+    if err:
+        return err
     cid = (data.get("id") or "").strip()
     entry = board.pop(cid, None)
     if not entry:

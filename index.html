@@ -516,6 +516,28 @@
       return new Date().toTimeString().slice(0, 5);
     }
 
+    // 書き込み系APIの共通処理。サーバーがvery easyモードのときは401が返るので、
+    // そこで初めて合言葉を聞いてlocalStorageに保存し再送する(noneモードでは一切聞かない)。
+    // キャンセルまたは規定回数失敗ならnullを返す(呼び出し元は中断する)
+    async function postJson(url, body) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(passphrase ? { ...body, passphrase } : body),
+        });
+        if (res.status !== 401) return res.json();
+        localStorage.removeItem("mokumoku-passphrase");
+        const input = (prompt(passphrase ? "合言葉が違います。もう一度入力してください" : "合言葉を入力してください") || "").trim();
+        if (!input) return null;
+        localStorage.setItem("mokumoku-passphrase", input);
+      }
+      localStorage.removeItem("mokumoku-passphrase");
+      alert("合言葉が違います");
+      return null;
+    }
+
     async function poll() {
       try {
         const [msgRes, boardRes] = await Promise.all([fetch("/messages"), fetch("/board")]);
@@ -547,11 +569,8 @@
       const name = nameEl.value.trim();
       const text = textEl.value.trim();
       if (!name || !text) return;
-      await fetch("/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, text }),
-      });
+      const result = await postJson("/messages", { name, text });
+      if (!result) return;
       textEl.value = "";
       textEl.style.height = "auto";
       await poll();
@@ -562,12 +581,8 @@
       const task = taskEl.value.trim();
       if (!name) { alert("名前を入力してください"); nameEl.focus(); return; }
       if (!task) { alert("もくもくする内容を入力してください"); taskEl.focus(); return; }
-      const res = await fetch("/board/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: clientId, name, task, start: startEl.value, end: endEl.value }),
-      });
-      const result = await res.json();
+      const result = await postJson("/board/join", { id: clientId, name, task, start: startEl.value, end: endEl.value });
+      if (!result) return;
       if (result.roomFull) {
         alert("満室です。空きが出るまでお待ちください");
         return;
@@ -604,12 +619,8 @@
     }));
 
     leaveBtn.addEventListener("click", async () => {
-      const res = await fetch("/board/leave", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: clientId }),
-      });
-      const result = await res.json();
+      const result = await postJson("/board/leave", { id: clientId });
+      if (!result) return;
       taskEl.value = "";
       startEl.value = "";
       endEl.value = "";
