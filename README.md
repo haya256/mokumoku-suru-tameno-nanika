@@ -48,9 +48,9 @@
 git clone https://github.com/haya256/mokumoku-suru-tameno-nanika.git
 cd mokumoku-suru-tameno-nanika
 
-# 2. Python の仮想環境を作って Flask を入れる（初回だけ）
+# 2. Python の仮想環境を作って必要なライブラリを入れる（初回だけ）
 python3 -m venv venv
-venv/bin/pip install flask
+venv/bin/pip install flask waitress
 
 # 3. サーバーを起動
 venv/bin/python server.py
