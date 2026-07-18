@@ -98,9 +98,12 @@ def add_system_message(text):
 def index():
     return send_from_directory(".", "index.html")
 
+# 部屋の画像は config/settings.json の appearance.room_image で差し替え可能(再起動不要)
 @app.route("/room-image.png")
 def room_image():
-    return send_from_directory("assets", "room-image-1.png")
+    path = load_settings().get("appearance", {}).get("room_image") or "assets/room-image-1.png"
+    directory, filename = os.path.split(path)
+    return send_from_directory(directory or ".", filename)
 
 @app.route("/chara-image.png")
 def chara_image():

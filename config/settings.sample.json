@@ -2,5 +2,8 @@
   "security": {
     "mode": "very_easy",
     "passphrase_file": "config/合言葉.txt"
+  },
+  "appearance": {
+    "room_image": "assets/room-image-1.png"
   }
 }
