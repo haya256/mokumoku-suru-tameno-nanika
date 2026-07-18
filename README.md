@@ -70,6 +70,35 @@ ipconfig getifaddr en0   # Mac
 
 参加者には `http://192.168.1.23:5000` のように伝えます。
 
+#### インターネット越しに参加してもらう（Cloudflare Tunnel）
+
+同じWi-Fiにいない人に参加してもらう簡易的な方法として、Cloudflare の「クイックトンネル」が使えます。アカウント登録なし・無料で、あなたのパソコンで動いているサーバーに一時的なURLでアクセスできるようになります。
+
+1. `cloudflared` コマンドをインストールします（初回だけ）。
+
+   ```bash
+   # Mac
+   brew install cloudflared
+
+   # Linux / WSL (Debian・Ubuntu系)
+   curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+   sudo dpkg -i /tmp/cloudflared.deb
+   ```
+
+2. サーバー（`venv/bin/python server.py`）を起動したまま、**別のターミナルで**次を実行します。
+
+   ```bash
+   cloudflared tunnel --url http://localhost:5000
+   ```
+
+3. 少し待つと、ターミナルに `https://ほにゃらら.trycloudflare.com` のようなURLが表示されます。これをそのまま参加者に伝えます。
+
+知っておいてほしいこと：
+
+- URLは実行するたびに変わります。もくもく会のたびに新しいURLを伝えてください
+- トンネルを止めるときは、そのターミナルで `Ctrl+C` です（サーバー本体は動いたままです）
+- インターネット上の誰でもURLさえ知ればアクセスできる状態になります。**後述の「合言葉を設定する」を必ず設定してから**URLを共有するのがおすすめです
+
 ### 知っておいてほしいこと
 
 - **データはサーバーを止めると消えます**（メモリ上にだけ保存しています）。1回のもくもく会ごとに使い切るイメージです
