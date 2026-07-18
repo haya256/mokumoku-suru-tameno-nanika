@@ -59,6 +59,13 @@
       animation: bob 2s steps(1, end) infinite;
     }
 
+    /* アップロードされたカスタム画像はスプライトでなく1枚絵として表示 */
+    .cell .chara.custom {
+      background-size: contain;
+      background-position: center;
+      image-rendering: auto;
+    }
+
     @keyframes bob {
       0%, 100% { transform: translateY(0); }
       50% { transform: translateY(-3px); }
@@ -258,6 +265,11 @@
       border-color: #555;
     }
 
+    input[type="file"] {
+      font-size: 0.8rem;
+      max-width: 180px;
+    }
+
     textarea {
       font-family: inherit;
       line-height: 1.4;
@@ -353,6 +365,8 @@
       <input id="start" type="time">
       <label for="end">終了予定</label>
       <input id="end" type="time">
+      <label for="chara">画像</label>
+      <input id="chara" type="file" accept="image/*">
       <button type="button" id="joinBtn">入室</button>
     </div>
     <div class="row" id="statusRow" style="display: none;">
@@ -382,6 +396,7 @@
     const taskEl = document.getElementById("task");
     const startEl = document.getElementById("start");
     const endEl = document.getElementById("end");
+    const charaEl = document.getElementById("chara");
     const joinRow = document.getElementById("joinRow");
     const statusRow = document.getElementById("statusRow");
     const chatRow = document.getElementById("chatRow");
@@ -444,7 +459,7 @@
 
     function renderRooms(entries) {
       // ポーズ(0〜2)は入室時にサーバーが決めて退室まで固定
-      const occupants = entries.map(e => ({ room: e.room, name: e.name, task: e.task, pose: e.pose || 0 }));
+      const occupants = entries.map(e => ({ id: e.id, room: e.room, name: e.name, task: e.task, pose: e.pose || 0, imgv: e.imgv || 0 }));
       // 変化がなければDOMを触らない(作り直すとCSSアニメーションがリセットされるため)
       const state = JSON.stringify(occupants);
       if (state === lastRoomState) return;
@@ -455,9 +470,15 @@
         if (!cell) return;
         const chara = document.createElement("div");
         chara.className = "chara";
-        const col = ((o.room - 1) % 3) * 3 + o.pose;
-        const row = Math.floor((o.room - 1) / 3) * 2;
-        chara.style.backgroundPosition = `${col / 8 * 100}% ${row / 5 * 100}%`;
+        if (o.imgv) {
+          // アップロードされたカスタム画像(imgvはキャッシュバスター兼差分検知用)
+          chara.classList.add("custom");
+          chara.style.backgroundImage = `url(/chara-custom/${encodeURIComponent(o.id)}.png?v=${o.imgv})`;
+        } else {
+          const col = ((o.room - 1) % 3) * 3 + o.pose;
+          const row = Math.floor((o.room - 1) / 3) * 2;
+          chara.style.backgroundPosition = `${col / 8 * 100}% ${row / 5 * 100}%`;
+        }
         chara.style.animationDelay = `${(o.room * 0.3) % 2}s`;
         cell.appendChild(chara);
         const badge = document.createElement("span");
@@ -514,6 +535,18 @@
 
     function nowHHMM() {
       return new Date().toTimeString().slice(0, 5);
+    }
+
+    // 選択された画像を最大256pxに縮小してPNGのデータURLにする(画像でないファイルはthrow)
+    async function fileToDataUrl(file) {
+      const bmp = await createImageBitmap(file);
+      const MAX = 256;
+      const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bmp.width * scale));
+      canvas.height = Math.max(1, Math.round(bmp.height * scale));
+      canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/png");
     }
 
     // 書き込み系APIの共通処理。サーバーがvery easyモードのときは401が返るので、
@@ -581,12 +614,28 @@
       const task = taskEl.value.trim();
       if (!name) { alert("名前を入力してください"); nameEl.focus(); return; }
       if (!task) { alert("もくもくする内容を入力してください"); taskEl.focus(); return; }
-      const result = await postJson("/board/join", { id: clientId, name, task, start: startEl.value, end: endEl.value });
+      let image = null;
+      if (charaEl.files[0]) {
+        try {
+          image = await fileToDataUrl(charaEl.files[0]);
+        } catch {
+          alert("画像として読み込めませんでした");
+          charaEl.value = "";
+          return;
+        }
+      }
+      const result = await postJson("/board/join", { id: clientId, name, task, start: startEl.value, end: endEl.value, ...(image && { image }) });
       if (!result) return;
       if (result.roomFull) {
         alert("満室です。空きが出るまでお待ちください");
         return;
       }
+      if (result.error) {
+        alert("入室に失敗しました: " + result.error);
+        return;
+      }
+      // 送信済みの画像はクリア(編集モードで再送しない=サーバー側で維持される)
+      charaEl.value = "";
       recordRow.style.display = "none";
       const wasEditing = editing;
       editing = false;

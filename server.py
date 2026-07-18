@@ -1,14 +1,22 @@
+import base64
+import binascii
 import hmac
 import os
 import random
 import urllib.request
 import json as _json
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from datetime import datetime
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 messages = []
 board = {}
+# カスタムキャラ画像は board と同じライフサイクル(退室で破棄、再起動で消える)
+custom_images = {}  # cid -> {"data": bytes, "v": int}
+_img_seq = 0  # キャッシュバスター用の通し番号。退室しても巻き戻さない(再入室時のキャッシュ誤爆防止)
+MAX_IMAGE_B64 = 700_000
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 SETTINGS_FILE = "config/settings.json"
@@ -43,6 +51,19 @@ def check_passphrase(data):
     if not hmac.compare_digest(supplied.encode(), expected.encode()):
         return jsonify({"error": "wrong passphrase", "authRequired": True}), 401
     return None
+
+# クライアントがcanvasで縮小・PNG化したデータURLを検証してPNGバイト列を返す。不正ならNone
+def decode_chara_image(image):
+    prefix = "data:image/png;base64,"
+    if not isinstance(image, str) or not image.startswith(prefix) or len(image) > MAX_IMAGE_B64:
+        return None
+    try:
+        raw = base64.b64decode(image[len(prefix):], validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if not raw.startswith(PNG_MAGIC):
+        return None
+    return raw
 
 def post_to_discord(content):
     if not DISCORD_WEBHOOK_URL:
@@ -79,6 +100,16 @@ def room_image():
 @app.route("/chara-image.png")
 def chara_image():
     return send_from_directory("assets", "chara-image-1.png")
+
+# インメモリdictの参照のみ(ファイルシステム非接触)。バージョン付きURLで配信するので長めにキャッシュ可
+@app.route("/chara-custom/<cid>.png")
+def chara_custom(cid):
+    img = custom_images.get(cid)
+    if not img:
+        return jsonify({"error": "not found"}), 404
+    return Response(img["data"], mimetype="image/png",
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
 
 @app.route("/messages", methods=["GET"])
 def get_messages():
@@ -135,7 +166,17 @@ def join_board():
         old_name = board[cid]["name"]
         if old_name != name:
             add_system_message(f"✏️ {old_name} が {name} に名前を変更")
-    board[cid] = {"id": cid, "name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose}
+    # 画像は任意。未送信なら既存のカスタム画像を維持(imgvはcustom_imagesから再計算)
+    image = data.get("image")
+    if image:
+        raw = decode_chara_image(image)
+        if raw is None:
+            return jsonify({"error": "invalid image"}), 400
+        global _img_seq
+        _img_seq += 1
+        custom_images[cid] = {"data": raw, "v": _img_seq}
+    imgv = custom_images.get(cid, {}).get("v", 0)
+    board[cid] = {"id": cid, "name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose, "imgv": imgv}
     if is_new:
         until = f"〜{end}" if end else "〜"
         add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
@@ -149,6 +190,7 @@ def leave_board():
         return err
     cid = (data.get("id") or "").strip()
     entry = board.pop(cid, None)
+    custom_images.pop(cid, None)  # 画像はその入室の間だけ有効
     if not entry:
         return jsonify({"ok": True})
     now = datetime.now()
