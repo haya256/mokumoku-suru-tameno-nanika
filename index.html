@@ -120,6 +120,28 @@
       padding: 12px 16px;
       font-size: 1.1rem;
       font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    #discordStatus {
+      font-size: 0.75rem;
+      font-weight: normal;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #555;
+      color: #ccc;
+    }
+
+    #discordStatus.on {
+      background: #2e7d32;
+      color: #fff;
+    }
+
+    #discordStatus.error {
+      background: #b71c1c;
+      color: #fff;
     }
 
     #board {
@@ -351,7 +373,7 @@
     <div id="roomOverlay"></div>
   </div>
   <div id="main">
-  <header>もくもく会</header>
+  <header>もくもく会 <span id="discordStatus"></span></header>
   <div id="board">
     <h2>いまもくもく中</h2>
     <div id="entries"><div class="empty">まだ誰ももくもくしていません</div></div>
@@ -408,6 +430,7 @@
     const recordText = document.getElementById("recordText");
     const copyBtn = document.getElementById("copyBtn");
     const closeRecordBtn = document.getElementById("closeRecordBtn");
+    const discordStatusEl = document.getElementById("discordStatus");
 
     let editing = false;
     let lastEntries = [];
@@ -571,11 +594,26 @@
       return null;
     }
 
+    const DISCORD_BADGES = {
+      on:    { label: "Discord投稿: オン", title: "チャットと入退室はDiscordにも投稿されます" },
+      off:   { label: "Discord投稿: オフ", title: "Discordには投稿されません(Webhook URL未設定)" },
+      error: { label: "Discord投稿: エラー", title: "直近のDiscord投稿に失敗しました(Webhook URLが失効している可能性)" },
+    };
+
+    function renderStatus(status) {
+      const badge = DISCORD_BADGES[status.discord];
+      if (!badge) return;
+      discordStatusEl.textContent = badge.label;
+      discordStatusEl.title = badge.title;
+      discordStatusEl.className = status.discord;
+    }
+
     async function poll() {
       try {
-        const [msgRes, boardRes] = await Promise.all([fetch("/messages"), fetch("/board")]);
+        const [msgRes, boardRes, statusRes] = await Promise.all([fetch("/messages"), fetch("/board"), fetch("/status")]);
         render(await msgRes.json());
         renderBoard(await boardRes.json());
+        renderStatus(await statusRes.json());
       } catch {}
     }
 

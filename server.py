@@ -19,6 +19,8 @@ MAX_IMAGE_B64 = 700_000
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+# 直近のDiscord送信結果。None=未送信。URL失効(404)等に画面で気づけるように保持する
+discord_last_ok = None
 SETTINGS_FILE = "config/settings.json"
 DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
 
@@ -66,6 +68,7 @@ def decode_chara_image(image):
     return raw
 
 def post_to_discord(content):
+    global discord_last_ok
     if not DISCORD_WEBHOOK_URL:
         return
     payload = _json.dumps({"content": content}).encode()
@@ -77,7 +80,9 @@ def post_to_discord(content):
     )
     try:
         urllib.request.urlopen(req, timeout=5)
+        discord_last_ok = True
     except Exception as e:
+        discord_last_ok = False
         print(f"[Discord] error: {e}")
 
 def add_system_message(text):
@@ -110,6 +115,17 @@ def chara_custom(cid):
     return Response(img["data"], mimetype="image/png",
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
+
+# Discord連携の現在状態: off=URL未設定 / on=設定済み / error=直近の送信が失敗(URL失効など)
+@app.route("/status")
+def get_status():
+    if not DISCORD_WEBHOOK_URL:
+        discord = "off"
+    elif discord_last_ok is False:
+        discord = "error"
+    else:
+        discord = "on"
+    return jsonify({"discord": discord})
 
 @app.route("/messages", methods=["GET"])
 def get_messages():
