@@ -39,7 +39,8 @@
 
 ### 必要なもの
 
-- Python 3.x が入ったパソコン（Mac / Linux / Windows(WSL)）
+- Python 3.x が入ったパソコン、またはVPS（レンタルサーバー）（Mac / Linux / Windows(WSL)）
+  - 自分だけで試すならパソコンで十分ですが、**参加者を集めて実際に公開するならVPSを推奨**します（理由は後述）
 
 ### 手順（初回）
 
@@ -62,37 +63,69 @@ venv/bin/python server.py
 
 ### 参加者にURLを教える（Cloudflare Tunnel）
 
-参加者にインターネット越しにアクセスしてもらう簡易的な方法として、Cloudflare の「クイックトンネル」が使えます。アカウント登録なし・無料で、あなたのパソコンで動いているサーバーに一時的なURLでアクセスできるようになります。
+参加者にインターネット越しにアクセスしてもらう方法として、Cloudflare の「クイックトンネル」が使えます。アカウント登録なし・無料で、サーバーに一時的なURL（HTTPS付き）でアクセスできるようになります。
 
-1. `cloudflared` コマンドをインストールします（初回だけ）。
+> ⚠️ **自分の使っているパソコンで直接動かすのは非推奨です。** 万一このアプリに脆弱性があった場合、パソコンそのものがインターネットに直接晒される形になり、被害が他の作業データやブラウザのログイン状態などパソコン全体に及ぶ可能性があります。**参加者を集めて実際に使うときは、VPS（レンタルサーバー）上で動かしてください。** 何なら侵害されてもそのVPSだけの被害で済みます。
 
-   ```bash
-   # Mac
-   brew install cloudflared
+#### VPS上で動かす場合
 
-   # Linux / WSL (Debian・Ubuntu系)
-   curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
-   sudo dpkg -i /tmp/cloudflared.deb
-   ```
+VPSにSSHでログインした状態で実行します。`server.py`（アプリ本体）と `cloudflared`（公開用トンネル）の2つを起動しっぱなしにする必要があります。やり方は2パターンあるので、好みで選んでください。
 
-2. サーバー（`venv/bin/python server.py`）を起動したまま、**別のターミナルで**次を実行します。
+**パターンA: 2つのSSHセッションを開く（シンプル）**
 
-   ```bash
-   cloudflared tunnel --url http://localhost:5000
-   ```
+「手順（初回）」の `venv/bin/python server.py` を実行したセッションをそのまま残しておき、**別のSSHセッションをもう1つ開いて**、以下を実行します。SSHセッションを閉じると両方止まるので、動作確認だけしたい・短時間だけ使う場合向けです。
 
-3. 少し待つと、ターミナルに `https://ほにゃらら.trycloudflare.com` のようなURLが表示されます。これをそのまま参加者に伝えます。
+```bash
+# 1. cloudflaredをインストール（初回だけ、Ubuntu/Debian系）
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+sudo dpkg -i /tmp/cloudflared.deb
+
+# 2. トンネルを開始
+cloudflared tunnel --url http://localhost:5000
+```
+
+**パターンB: nohup でバックグラウンド化（SSHセッション1つで完結、おすすめ）**
+
+`server.py` を `nohup` でバックグラウンドに回すと、SSHセッションを閉じてもサーバーが動き続けます。同じセッションのまま続けて `cloudflared` も起動できます。
+
+```bash
+# 1. サーバーをバックグラウンドで起動
+nohup venv/bin/python server.py > server.log 2>&1 &
+disown
+
+# 2. 動いているか確認（HTMLが返ってくればOK）
+curl http://localhost:5000
+
+# 3. cloudflaredをインストール（初回だけ、Ubuntu/Debian系）
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+sudo dpkg -i /tmp/cloudflared.deb
+
+# 4. トンネルを開始
+cloudflared tunnel --url http://localhost:5000
+```
+
+- ログを見たいときは `tail -f server.log`
+- サーバーだけ止めたいときは `pkill -f server.py`
+
+少し待つと `https://ほにゃらら.trycloudflare.com` のようなURLが表示されます。これをそのまま参加者に伝えます（サーバーは`127.0.0.1`でしか待ち受けないので、ファイアウォールを開ける必要はありません）。
+
+終わったら、サーバーとトンネル両方のプロセスを止めます。
+
+```bash
+ps aux | grep -E "server.py|cloudflared"
+kill <server.pyのPID> <cloudflaredのPID>
+```
 
 知っておいてほしいこと：
 
 - URLは実行するたびに変わります。もくもく会のたびに新しいURLを伝えてください
-- トンネルを止めるときは、そのターミナルで `Ctrl+C` です（サーバー本体は動いたままです）
 - インターネット上の誰でもURLさえ知ればアクセスできる状態になります。**後述の「合言葉を設定する」を必ず設定してから**URLを共有するのがおすすめです
+- `python3 -m venv venv` で「ensurepipが無い」というエラーが出た場合は、`sudo apt install python3.12-venv` を実行してから作り直してください
 
 ### 知っておいてほしいこと
 
 - **データはサーバーを止めると消えます**（メモリ上にだけ保存しています）。1回のもくもく会ごとに使い切るイメージです
-- 止めるときはターミナルで `Ctrl+C` です
+- 止めるときはターミナルで `Ctrl+C` です。反応しない場合は `ps aux | grep server.py` でプロセスを探し、`kill <PID>` で止めてください
 
 ---
 
