@@ -209,6 +209,7 @@
       border-radius: 8px;
       padding: 8px 12px;
       max-width: 480px;
+      flex-shrink: 0;
     }
 
     .msg .meta {
@@ -257,7 +258,8 @@
 
     form .row {
       display: flex;
-      gap: 8px;
+      flex-wrap: wrap;
+      gap: 10px 8px;
       align-items: center;
     }
 
@@ -265,6 +267,40 @@
       font-size: 0.8rem;
       color: #888;
       flex-shrink: 0;
+    }
+
+    .field {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #joinRow, #statusRow {
+      flex-wrap: nowrap;
+      align-items: stretch;
+    }
+
+    .lines {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .row-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 8px;
+      align-items: center;
+    }
+
+    .tall-btn {
+      flex-shrink: 0;
+      align-self: stretch;
+      min-width: 90px;
+      font-size: 1.05rem;
     }
 
     input[type="time"] {
@@ -289,7 +325,6 @@
 
     input[type="file"] {
       font-size: 0.8rem;
-      max-width: 180px;
     }
 
     textarea {
@@ -325,6 +360,15 @@
 
     #editBtn { flex-shrink: 0; }
 
+    #cancelEditBtn {
+      background: #fff;
+      color: #888;
+      border: 1px solid #ccc;
+      flex-shrink: 0;
+    }
+
+    #cancelEditBtn:hover { background: #eee; }
+
     #recordLabel {
       font-size: 0.85rem;
       color: #555;
@@ -359,11 +403,7 @@
     #leaveBtn:hover { background: #fee; }
 
     #myStatus {
-      flex: 1;
       font-size: 0.9rem;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
   </style>
 </head>
@@ -381,30 +421,38 @@
   <div id="messages"></div>
   <form id="form">
     <div class="row" id="joinRow">
-      <input id="name" type="text" placeholder="名前">
-      <input id="task" type="text" placeholder="もくもくする内容(ボードに載ります)">
-      <label for="start">開始</label>
-      <input id="start" type="time">
-      <label for="end">終了予定</label>
-      <input id="end" type="time">
-      <label for="chara">画像</label>
-      <input id="chara" type="file" accept="image/*">
-      <button type="button" id="joinBtn">入室</button>
+      <div class="lines">
+        <div class="row-line">
+          <input id="name" type="text" placeholder="名前">
+          <span class="field"><label for="chara">キャラ画像(任意/未指定なら自動割当)</label><input id="chara" type="file" accept="image/*"></span>
+        </div>
+        <div class="row-line">
+          <input id="task" type="text" placeholder="もくもくする内容(ボードに載ります)">
+          <span class="field"><label for="start">開始</label><input id="start" type="time"></span>
+          <span class="field"><label for="end">終了予定</label><input id="end" type="time"></span>
+        </div>
+      </div>
+      <button type="button" id="joinBtn" class="tall-btn">入室</button>
+      <button type="button" id="cancelEditBtn" class="tall-btn" style="display: none;">キャンセル</button>
     </div>
     <div class="row" id="statusRow" style="display: none;">
-      <span id="myStatus"></span>
-      <button type="button" id="editBtn">編集</button>
-      <button type="button" id="leaveBtn">退室</button>
+      <div class="lines">
+        <div class="row-line">
+          <span id="myStatus"></span>
+          <button type="button" id="editBtn">編集</button>
+        </div>
+        <div class="row-line">
+          <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
+          <button type="submit">送信</button>
+        </div>
+      </div>
+      <button type="button" id="leaveBtn" class="tall-btn">退室</button>
     </div>
     <div class="row" id="recordRow" style="display: none;">
       <span id="recordLabel">📋 今日の記録</span>
       <input id="recordText" type="text" readonly>
       <button type="button" id="copyBtn">コピー</button>
       <button type="button" id="closeRecordBtn">✕</button>
-    </div>
-    <div class="row" id="chatRow" style="display: none;">
-      <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
-      <button type="submit">送信</button>
     </div>
   </form>
   </div>
@@ -421,11 +469,11 @@
     const charaEl = document.getElementById("chara");
     const joinRow = document.getElementById("joinRow");
     const statusRow = document.getElementById("statusRow");
-    const chatRow = document.getElementById("chatRow");
     const myStatusEl = document.getElementById("myStatus");
     const joinBtn = document.getElementById("joinBtn");
     const editBtn = document.getElementById("editBtn");
     const leaveBtn = document.getElementById("leaveBtn");
+    const cancelEditBtn = document.getElementById("cancelEditBtn");
     const recordRow = document.getElementById("recordRow");
     const recordText = document.getElementById("recordText");
     const copyBtn = document.getElementById("copyBtn");
@@ -532,8 +580,8 @@
 
     // 入室状態に応じてフォームを切替:
     //   入室前     → 入室フォームのみ(チャット不可)
-    //   入室中     → ステータス+編集/退室ボタン+チャット
-    //   編集モード → 入室フォーム(ボタンは「更新」)+チャット
+    //   入室中     → ステータス+編集/送信/退室ボタン+チャット
+    //   編集モード → 入室フォーム(ボタンは「更新」)。チャットは編集を終えるまで不可
     function updateMyStatus() {
       const mine = lastEntries.find(e => e.id === clientId);
       if (mine) {
@@ -541,14 +589,14 @@
         myStatusEl.textContent = `🟢 ${mine.name}: ルーム${mine.room}でもくもく中(${mine.start}${until}): ${mine.task}`;
         joinRow.style.display = editing ? "flex" : "none";
         statusRow.style.display = editing ? "none" : "flex";
-        chatRow.style.display = "flex";
         joinBtn.textContent = "更新";
+        cancelEditBtn.style.display = editing ? "inline-block" : "none";
       } else {
         editing = false;
         joinRow.style.display = "flex";
         statusRow.style.display = "none";
-        chatRow.style.display = "none";
         joinBtn.textContent = "入室";
+        cancelEditBtn.style.display = "none";
       }
     }
 
@@ -697,6 +745,12 @@
       taskEl.focus();
     });
 
+    cancelEditBtn.addEventListener("click", () => {
+      editing = false;
+      charaEl.value = "";
+      updateMyStatus();
+    });
+
     // 入室フォームでEnterを押したら入室(IME変換確定は除く)
     [nameEl, taskEl].forEach(el => el.addEventListener("keydown", e => {
       if (e.key === "Enter" && !e.isComposing) {
@@ -706,6 +760,7 @@
     }));
 
     leaveBtn.addEventListener("click", async () => {
+      if (!confirm("退室しますか？")) return;
       const result = await postJson("/board/leave", { id: clientId });
       if (!result) return;
       taskEl.value = "";
