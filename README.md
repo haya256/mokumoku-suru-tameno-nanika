@@ -37,14 +37,160 @@
 
 ## 主催者向け：サーバーの立て方
 
+参加者にHTTPSの使い捨てURLでアクセスしてもらう仕組みを、AWS EC2上で自動化しています。イベントのたびにインスタンスを起動 → URLを取得 → 終わったら破棄、という流れをスクリプト2本で行います。**AWSアカウントでの一度だけの準備**が必要ですが、それさえ済ませれば毎回はコマンド2つで完結します。
+
 ### 必要なもの
 
-- Python 3.x が入ったパソコン、またはVPS（レンタルサーバー）（Mac / Linux / Windows(WSL)）
-  - 自分だけで試すならパソコンで十分ですが、**参加者を集めて実際に公開するならVPSを推奨**します（理由は後述）
+- AWSアカウント（`t3.micro`は無料枠の対象になる場合が多いですが、課金の可能性があることは理解した上で進めてください）
+- Python 3.x が入ったパソコン（Mac / Linux / Windows(WSL)）※アプリ本体はAWS上で動くので、参加者を招く用途でこのパソコン自体を公開する必要はありません
+- git
 
-### 手順（初回）
+### 初回だけの準備
 
-ターミナルで以下を順番に実行します。
+一度やれば、以降は「イベントごと」の2コマンドだけで済みます。
+
+```bash
+# 1. このリポジトリを取得
+git clone https://github.com/haya256/mokumoku-suru-tameno-nanika.git
+cd mokumoku-suru-tameno-nanika
+
+# 2. 起動スクリプトが使うライブラリを入れる
+python3 -m venv venv
+venv/bin/pip install boto3 awscli
+```
+
+#### AWSコンソールでの設定（一度だけ）
+
+1. **IAMロール（兼インスタンスプロフィール）を作る** — 起動したインスタンスがSSM経由で操作できるようにするためのものです
+   - IAM → ロール → 「ロールを作成」→ 信頼するエンティティ: **AWSのサービス** → ユースケース: **EC2**
+   - 許可ポリシーで `AmazonSSMManagedInstanceCore` を検索してチェック
+   - ロール名は `mokumoku-ssm-role` など分かりやすい名前に。作成すると同じ名前のインスタンスプロフィールも自動的にできます
+2. **セキュリティグループを作る** — インバウンドルールは追加不要です。cloudflaredもSSM Agentもインスタンス側から外向きに接続するだけなので、ポートを開ける必要がありません
+   - EC2 → セキュリティグループ → 「セキュリティグループを作成」→ VPCは**デフォルトVPC**を選択
+   - インバウンドルールは何も追加しない（アウトバウンドは初期状態の「すべて許可」のままでOK）
+3. **操作用のIAMユーザーを作る** — このパソコンから起動・終了スクリプトを実行するための認証情報です
+   - IAM → ユーザー → 「ユーザーを作成」→ アクセスキーを発行
+   - 以下をインラインポリシーとして貼り付けます（`<ロールのARN>` は手順1で作ったロールのARNに置き換え）
+
+     ```json
+     {
+       "Version": "2012-10-17",
+       "Statement": [
+         {
+           "Effect": "Allow",
+           "Action": [
+             "ec2:RunInstances",
+             "ec2:TerminateInstances",
+             "ec2:CreateTags",
+             "ec2:Describe*",
+             "ssm:SendCommand",
+             "ssm:GetCommandInvocation",
+             "ssm:DescribeInstanceInformation"
+           ],
+           "Resource": "*"
+         },
+         {
+           "Effect": "Allow",
+           "Action": "iam:PassRole",
+           "Resource": "<ロールのARN>"
+         }
+       ]
+     }
+     ```
+
+   - 発行されたアクセスキーID・シークレットアクセスキーを控えておく
+4. **ローカルにAWS認証情報を設定**
+
+   ```bash
+   venv/bin/aws configure
+   # アクセスキーID、シークレットアクセスキー、デフォルトリージョン(ap-northeast-1)を入力
+   ```
+
+5. **`config/settings.json` を作って `deploy` セクションを埋める**
+
+   ```bash
+   cp config/settings.sample.json config/settings.json
+   ```
+
+   `ami_id` は最新のUbuntuイメージIDを次のコマンドで調べられます（実行するたびに最新版が得られます）。
+
+   ```bash
+   venv/bin/aws ssm get-parameters \
+     --names /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
+     --region ap-northeast-1 --query 'Parameters[0].Value' --output text
+   ```
+
+   `security_group_id` / `subnet_id` は手順2で作ったセキュリティグループのID、デフォルトVPC内の適当なサブネットのID（AWSコンソールの「サブネット」一覧で確認できます）。`iam_instance_profile_name` は手順1で作ったロール名です。
+
+   ```json
+   {
+     "deploy": {
+       "region": "ap-northeast-1",
+       "instance_type": "t3.micro",
+       "ami_id": "ami-xxxxxxxxxxxxxxxxx",
+       "security_group_id": "sg-xxxxxxxxxxxxxxxxx",
+       "subnet_id": "subnet-xxxxxxxxxxxxxxxxx",
+       "iam_instance_profile_name": "mokumoku-ssm-role",
+       "auto_terminate_hours": 6
+     }
+   }
+   ```
+
+6. **合言葉を設定する**（推奨。詳しくは後述の「合言葉を設定する」を参照）
+
+   ```bash
+   mkdir -p config
+   echo "好きな合言葉" > config/合言葉.txt
+   ```
+
+これで準備は完了です。
+
+### イベントごと：起動と終了
+
+もくもく会を開くたびに、この2コマンドだけです。
+
+```bash
+# イベント開始時: インスタンスを起動してURLを取得(数分かかります)
+venv/bin/python deploy/start_event.py
+```
+
+`参加者に共有するURL: https://xxxxx.trycloudflare.com` のように表示されたら、そのURLを参加者に伝えます。
+
+```bash
+# イベント終了時: インスタンスを完全に破棄(データも消えます)
+venv/bin/python deploy/stop_event.py
+```
+
+### 知っておいてほしいこと
+
+- **データも環境もイベントごとに使い捨てです。** `stop_event.py` でインスタンスごと破棄され、チャット履歴や入室記録は一切残りません
+- URLは起動するたびに変わります。もくもく会のたびに新しいURLを伝えてください
+- `stop_event.py` を実行し忘れた場合に備えて、インスタンス内で**6時間後に自動シャットダウン**する保険が入っています。ただし課金を確実に止めるには、シャットダウン待ちにせず `stop_event.py` で明示的に終了させることを推奨します
+- インスタンス起動時に渡す情報(合言葉やDiscord Webhook URLを含む)は、同じAWSアカウント内で権限を持つ人なら閲覧できる状態になります。SSHでログインされるのと同程度の信頼範囲だと考えてください
+- AWSを使わずローカルで動作確認だけしたい場合は `venv/bin/pip install -r requirements.txt && venv/bin/python server.py` で `http://localhost:5000` を開けます
+
+### 困ったとき（デプロイ関連）
+
+URLが出ずタイムアウトする場合は、SSM経由でインスタンスに入ってログを確認できます。
+
+```bash
+venv/bin/aws ssm start-session --target <start_event.pyが表示したインスタンスID>
+cat /var/log/mokumoku_userdata.log   # セットアップ全体のログ
+cat /var/log/mokumoku_server.log     # server.py自体のログ
+cat /var/log/tunnel_raw.log          # cloudflaredのログ
+```
+
+インスタンスが残っていないか不安なときは、AWSコンソールのEC2画面か、以下のコマンドで確認できます。
+
+```bash
+venv/bin/aws ec2 describe-instances --filters "Name=tag:Name,Values=mokumoku-event" "Name=instance-state-name,Values=running"
+```
+
+### 代替手段：VPS + Cloudflare Tunnel（手動・AWSを使いたくない場合）
+
+AWSアカウントを作りたくない場合や、すでに自分のVPSを持っていて使い慣れている場合は、こちらの手動デプロイもできます。EC2自動化と違い、`server.py` と `cloudflared` の起動・停止は自分で行う必要があります。
+
+- Python 3.x が入ったVPS（レンタルサーバー）（Mac / Linux / Windows(WSL)でも試せますが、**参加者を集めて実際に公開するならVPSを推奨**します。理由は後述）
 
 ```bash
 # 1. このリポジトリを取得
@@ -53,15 +199,13 @@ cd mokumoku-suru-tameno-nanika
 
 # 2. Python の仮想環境を作って必要なライブラリを入れる（初回だけ）
 python3 -m venv venv
-venv/bin/pip install flask waitress
+venv/bin/pip install -r requirements.txt
 
 # 3. サーバーを起動
 venv/bin/python server.py
 ```
 
 起動したら、ブラウザで http://localhost:5000 を開いて動作を確認してください。
-
-### 参加者にURLを教える（Cloudflare Tunnel）
 
 参加者にインターネット越しにアクセスしてもらう方法として、Cloudflare の「クイックトンネル」が使えます。アカウント登録なし・無料で、サーバーに一時的なURL（HTTPS付き）でアクセスできるようになります。
 
@@ -73,7 +217,7 @@ VPSにSSHでログインした状態で実行します。`server.py`（アプリ
 
 **パターンA: 2つのSSHセッションを開く（シンプル）**
 
-「手順（初回）」の `venv/bin/python server.py` を実行したセッションをそのまま残しておき、**別のSSHセッションをもう1つ開いて**、以下を実行します。SSHセッションを閉じると両方止まるので、動作確認だけしたい・短時間だけ使う場合向けです。
+上の `venv/bin/python server.py` を実行したセッションをそのまま残しておき、**別のSSHセッションをもう1つ開いて**、以下を実行します。SSHセッションを閉じると両方止まるので、動作確認だけしたい・短時間だけ使う場合向けです。
 
 ```bash
 # 1. cloudflaredをインストール（初回だけ、Ubuntu/Debian系）
@@ -121,9 +265,6 @@ kill <server.pyのPID> <cloudflaredのPID>
 - URLは実行するたびに変わります。もくもく会のたびに新しいURLを伝えてください
 - インターネット上の誰でもURLさえ知ればアクセスできる状態になります。**後述の「合言葉を設定する」を必ず設定してから**URLを共有するのがおすすめです
 - `python3 -m venv venv` で「ensurepipが無い」というエラーが出た場合は、`sudo apt install python3.12-venv` を実行してから作り直してください
-
-### 知っておいてほしいこと
-
 - **データはサーバーを止めると消えます**（メモリ上にだけ保存しています）。1回のもくもく会ごとに使い切るイメージです
 - 止めるときはターミナルで `Ctrl+C` です。反応しない場合は `ps aux | grep server.py` でプロセスを探し、`kill <PID>` で止めてください
 
@@ -196,6 +337,8 @@ cp config/settings.sample.json config/settings.json
 export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 venv/bin/python server.py
 ```
+
+EC2で起動する場合も同様に、`deploy/start_event.py` を実行する**前**に同じシェルで `export DISCORD_WEBHOOK_URL=...` しておけば、インスタンス起動時に自動で渡されます。
 
 > ⚠️ Webhook URL は秘密情報です。チャットなどに貼ると自動で無効化されることがあります。
 
