@@ -3,10 +3,15 @@ import binascii
 import hmac
 import os
 import random
+import time
 import urllib.request
 import json as _json
 from flask import Flask, request, jsonify, send_from_directory, Response
 from datetime import datetime
+
+# サーバーのOSタイムゾーン(EC2は既定でUTC)に関わらず、入退室記録をJST(クライアント側の時刻)と揃える
+os.environ["TZ"] = "Asia/Tokyo"
+time.tzset()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
