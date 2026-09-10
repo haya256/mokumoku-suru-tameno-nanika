@@ -193,6 +193,22 @@
 
     .entry .what {
       word-break: break-word;
+      flex: 1;
+    }
+
+    .entry .kick {
+      flex-shrink: 0;
+      background: #fff;
+      color: #c33;
+      border: 1px solid #c33;
+      border-radius: 4px;
+      padding: 1px 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+
+    .entry .kick:hover {
+      background: #fee;
     }
 
     #messages {
@@ -482,6 +498,8 @@
 
     let editing = false;
     let lastEntries = [];
+    // 合言葉欄に管理者合言葉を入れた場合にtrueになる(サーバー側が都度判定。ここはボタン表示のためだけのキャッシュ)
+    let isAdmin = false;
     nameEl.value = localStorage.getItem("mokumoku-name") || "";
     // 入室を待たず、名前欄の変更時点で即保存する
     nameEl.addEventListener("input", () => {
@@ -574,6 +592,14 @@
         div.className = "entry";
         const when = `${esc(e.start)}〜${esc(e.end || "?")}`;
         div.innerHTML = `<span class="room">Room ${e.room}</span><span class="who">${esc(e.name)}</span><span class="when">${when}</span><span class="what">${esc(e.task)}</span>`;
+        if (isAdmin && e.id !== clientId) {
+          const kickBtn = document.createElement("button");
+          kickBtn.type = "button";
+          kickBtn.className = "kick";
+          kickBtn.textContent = "強制退出";
+          kickBtn.addEventListener("click", () => kickUser(e.id, e.name));
+          div.appendChild(kickBtn);
+        }
         entriesEl.appendChild(div);
       });
     }
@@ -656,9 +682,44 @@
       discordStatusEl.className = status.discord;
     }
 
+    // 今保持している合言葉が管理者合言葉かどうかをサーバーに確認する(ボタン表示の判定用)
+    async function checkAdmin() {
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      if (!passphrase) { isAdmin = false; return; }
+      try {
+        const res = await fetch("/admin/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase }),
+        });
+        const data = await res.json();
+        isAdmin = !!data.isAdmin;
+      } catch {
+        isAdmin = false;
+      }
+    }
+
+    async function kickUser(id, name) {
+      if (!confirm(`${name} を強制退出させますか？`)) return;
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      try {
+        const res = await fetch("/board/kick", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, passphrase }),
+        });
+        if (!res.ok) { alert("強制退出に失敗しました"); return; }
+      } catch {
+        alert("強制退出に失敗しました");
+        return;
+      }
+      await poll();
+    }
+
     async function poll() {
       try {
         const [msgRes, boardRes, statusRes] = await Promise.all([fetch("/messages"), fetch("/board"), fetch("/status")]);
+        await checkAdmin();
         render(await msgRes.json());
         renderBoard(await boardRes.json());
         renderStatus(await statusRes.json());
@@ -763,6 +824,9 @@
       if (!confirm("退室しますか？")) return;
       const result = await postJson("/board/leave", { id: clientId });
       if (!result) return;
+      // 退室したら合言葉を覚えたままにしない。次回入室時に必ず聞き直すことで、
+      // 同じブラウザでも管理者合言葉に切り替えて入り直せるようにする
+      localStorage.removeItem("mokumoku-passphrase");
       taskEl.value = "";
       startEl.value = "";
       endEl.value = "";

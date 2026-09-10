@@ -28,6 +28,7 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 discord_last_ok = None
 SETTINGS_FILE = "config/settings.json"
 DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
+DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
 
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
 def load_settings():
@@ -38,26 +39,43 @@ def load_settings():
         print(f"[settings] {SETTINGS_FILE} を読めないためデフォルト(mode=very_easy)で動作: {e}")
         return {}
 
+# ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
+def read_secret_file(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            value = f.read().strip()
+    except OSError:
+        return None
+    return value or None
+
+def is_admin_passphrase(supplied):
+    security = load_settings().get("security", {})
+    path = security.get("admin_passphrase_file", DEFAULT_ADMIN_PASSPHRASE_FILE)
+    expected = read_secret_file(path)
+    if expected is None:
+        return False
+    return hmac.compare_digest((supplied or "").strip().encode(), expected.encode())
+
 # セキュリティモード(デフォルト: very_easy):
 #   none      … 認証なし(閲覧・書き込みとも自由)
 #   very_easy … 閲覧は自由。書き込み系(投稿/入室/退室)は部屋共通の合言葉が必要。
 #               ただし合言葉ファイルが未設置(または空)の間は認証なしで通す
+# 管理者合言葉(config/管理者合言葉.txt)を入力した場合も、部屋共通の合言葉の代わりとして通す。
+# これにより「合言葉欄に管理者合言葉を入れる」だけで通常の書き込み権限+管理者権限を両方得られる。
 def check_passphrase(data):
     security = load_settings().get("security", {})
     if security.get("mode", "very_easy") != "very_easy":
         return None
     path = security.get("passphrase_file", DEFAULT_PASSPHRASE_FILE)
-    try:
-        with open(path, encoding="utf-8") as f:
-            expected = f.read().strip()
-    except OSError:
-        expected = ""
-    if not expected:
+    expected = read_secret_file(path)
+    if expected is None:
         return None
     supplied = ((data or {}).get("passphrase") or "").strip()
-    if not hmac.compare_digest(supplied.encode(), expected.encode()):
-        return jsonify({"error": "wrong passphrase", "authRequired": True}), 401
-    return None
+    if hmac.compare_digest(supplied.encode(), expected.encode()):
+        return None
+    if is_admin_passphrase(supplied):
+        return None
+    return jsonify({"error": "wrong passphrase", "authRequired": True}), 401
 
 # クライアントがcanvasで縮小・PNG化したデータURLを検証してPNGバイト列を返す。不正ならNone
 def decode_chara_image(image):
@@ -205,6 +223,27 @@ def join_board():
         until = f"〜{end}" if end else "〜"
         add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
     return jsonify(board[cid]), 201
+
+# クライアントが今保持している合言葉が管理者合言葉と一致するか確認するだけの読み取り専用エンドポイント。
+# 一致すればクライアント側で「強制退出」ボタンを表示する(実際の実行権限はkick側でも都度検証する)
+@app.route("/admin/status", methods=["POST"])
+def admin_status():
+    data = request.get_json()
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    return jsonify({"isAdmin": is_admin_passphrase(supplied)})
+
+@app.route("/board/kick", methods=["POST"])
+def kick_board():
+    data = request.get_json()
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    cid = (data.get("id") or "").strip()
+    entry = board.pop(cid, None)
+    custom_images.pop(cid, None)
+    if entry:
+        add_system_message(f"🚫 {entry['name']} が管理者によりルーム{entry['room']}から強制退室させられました")
+    return jsonify({"ok": True})
 
 @app.route("/board/leave", methods=["POST"])
 def leave_board():
