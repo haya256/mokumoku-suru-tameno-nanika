@@ -5,11 +5,14 @@ import mimetypes
 import os
 import random
 import re
+import secrets
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 import json as _json
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, send_from_directory, Response
 from datetime import datetime
 
@@ -42,6 +45,21 @@ ROOM_IMAGE_DIR = "assets"
 ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
 _settings_write_lock = threading.Lock()
 
+# ワールドマップ: 他のもくもくルーム(ピア)の情報を自分のサーバーが取りに行って参加者に中継する。
+# ブラウザから相手サーバーを直接叩かせないことで、CORS設定が不要になり、参加者が何人いても
+# 相手への負荷が一定になり、参加者のIPが相手に渡らない
+MAX_PEERS = 8            # 中央(自分)を除いた3×3マップの周囲8マス
+PEER_POLL_INTERVAL = 5   # ピアを巡回する間隔(秒)。クライアントの2秒pollとは独立
+PEER_TIMEOUT = 5
+PEER_JSON_MAX = 1_000_000
+PEER_IMAGE_MAX = 2_000_000
+PEER_IMAGE_MAX_AGE = 300 # 部屋画像を取り直すまでの最長時間(秒)
+WEBP_MAGIC_HEAD = b"RIFF"
+WEBP_MAGIC_TAIL = b"WEBP"
+peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int, "ok": bool}
+peer_images = {}        # peer_id -> {"data": bytes, "version": int|None, "at": float}
+peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str}
+
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
 def load_settings():
     try:
@@ -67,16 +85,24 @@ def save_settings(settings):
             pass
         raise
 
-# appearance.room_imageだけを部分更新する。filenameはlist_room_images()で検証済みの前提
-def set_room_image_setting(filename):
+# 読み→変更→書きをロックの内側でまとめて行う。mutateは settings dict を直接書き換える関数で、
+# その戻り値をそのまま呼び出し元に返す(追加したピアなど、書き込み結果を知りたい場合のため)
+def update_settings(mutate):
     with _settings_write_lock:
         try:
             with open(SETTINGS_FILE, encoding="utf-8") as f:
                 settings = _json.load(f)
         except (OSError, ValueError):
             settings = {}
-        settings.setdefault("appearance", {})["room_image"] = f"{ROOM_IMAGE_DIR}/{filename}"
+        result = mutate(settings)
         save_settings(settings)
+        return result
+
+# appearance.room_imageだけを部分更新する。filenameはlist_room_images()で検証済みの前提
+def set_room_image_setting(filename):
+    def mutate(settings):
+        settings.setdefault("appearance", {})["room_image"] = f"{ROOM_IMAGE_DIR}/{filename}"
+    update_settings(mutate)
 
 # ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
 def read_secret_file(path):
@@ -103,6 +129,122 @@ def list_room_images():
     except OSError:
         return []
     return sorted(n for n in names if ROOM_IMAGE_PATTERN.fullmatch(n))
+
+# ピア一覧は毎回settings.jsonから読み直す。巡回スレッドもこれを使うので、管理者はサーバー稼働中に
+# 接続・解除でき再起動が要らない(合言葉や部屋画像が再起動不要なのと同じ流儀)
+def load_peers():
+    peers = load_settings().get("world", {}).get("peers")
+    return [p for p in peers if isinstance(p, dict)] if isinstance(peers, list) else []
+
+def find_peer(peer_id):
+    return next((p for p in load_peers() if p.get("id") == peer_id), None)
+
+# 受け付けるのはホストまでのURLだけ。パス付きは中継先URLの組み立てが壊れるので弾く。
+# schemeを絞るのは、取得した中身を参加者に中継する以上file:などを踏ませないため
+def normalize_peer_url(url):
+    url = (url or "").strip().rstrip("/")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    if parsed.path or parsed.query or parsed.fragment:
+        return None
+    return url
+
+def add_peer(url, name):
+    def mutate(settings):
+        world = settings.setdefault("world", {})
+        peers = [p for p in world.get("peers", []) if isinstance(p, dict)]
+        world["peers"] = peers
+        if any(p.get("url") == url for p in peers):
+            return {"error": "duplicate"}
+        if len(peers) >= MAX_PEERS:
+            return {"error": "full"}
+        # 空いているマスからランダムに選んで以降固定。設定に保存するので再起動しても動かない
+        used = {p.get("slot") for p in peers}
+        peer = {"id": secrets.token_hex(4), "url": url, "name": name,
+                "slot": random.choice([s for s in range(MAX_PEERS) if s not in used])}
+        peers.append(peer)
+        return {"peer": peer}
+    return update_settings(mutate)
+
+def remove_peer(peer_id):
+    def mutate(settings):
+        world = settings.setdefault("world", {})
+        peers = [p for p in world.get("peers", []) if isinstance(p, dict)]
+        world["peers"] = [p for p in peers if p.get("id") != peer_id]
+        return next((p for p in peers if p.get("id") == peer_id), None)
+    return update_settings(mutate)
+
+# 中継先は下記の決め打ちパスのみ。任意パスのプロキシにはしない
+def fetch_peer_bytes(url, limit):
+    req = urllib.request.Request(url, headers={"User-Agent": "mokumoku-bot/1.0"})
+    with urllib.request.urlopen(req, timeout=PEER_TIMEOUT) as res:
+        data = res.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("response too large")
+    return data
+
+def fetch_peer_json(url):
+    return _json.loads(fetch_peer_bytes(url, PEER_JSON_MAX).decode("utf-8"))
+
+# 失敗してもboard/messagesは前回値を残してok=Falseにするだけ。一瞬の通信断で
+# 相手の部屋から人が消えたように見えるのを避ける(クライアント側はグレーアウト表示にする)
+def refresh_peer(peer):
+    pid, url = peer["id"], peer["url"]
+    try:
+        board = fetch_peer_json(f"{url}/board")
+        msgs = fetch_peer_json(f"{url}/messages")
+        status = fetch_peer_json(f"{url}/status")
+        if not isinstance(board, list) or not isinstance(msgs, list) or not isinstance(status, dict):
+            raise ValueError("unexpected payload")
+        version = status.get("roomImageVersion")
+        peer_cache[pid] = {"board": board, "messages": msgs,
+                           "roomImageVersion": version if isinstance(version, int) else 0, "ok": True}
+    except Exception as e:
+        peer_cache[pid] = {**peer_cache.get(pid, {}), "ok": False}
+        print(f"[peers] {peer.get('name') or url}: {e}")
+        return
+    # 画像の取得失敗でピア全体をオフライン扱いにはしない(在室者やチャットは取れているため)
+    try:
+        refresh_peer_image(pid, url, version)
+    except Exception as e:
+        print(f"[peers] {peer.get('name') or url} の部屋画像: {e}")
+
+# 部屋画像は相手のバージョンが変わったときだけ取り直す(毎回取ると数百KBが5秒おきに流れる)。
+# ただし相手が再起動するとバージョンは0に戻るので、それだけに頼らず一定時間で取り直す
+def refresh_peer_image(pid, url, version):
+    cached = peer_images.get(pid)
+    if cached and cached["version"] == version and time.time() - cached["at"] < PEER_IMAGE_MAX_AGE:
+        return
+    data = fetch_peer_bytes(f"{url}/room-image.webp", PEER_IMAGE_MAX)
+    # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
+    if data[:4] != WEBP_MAGIC_HEAD or data[8:12] != WEBP_MAGIC_TAIL:
+        raise ValueError("not a webp image")
+    peer_images[pid] = {"data": data, "version": version, "at": time.time()}
+
+def poll_peers_once():
+    peers = load_peers()
+    ids = {p.get("id") for p in peers}
+    # 設定から消えたピアのキャッシュは捨てる。残すとメモリを食い続けるうえ、
+    # 同じURLを付け直したときに取り直す前の古い内容が一瞬見えてしまう
+    for pid in [p for p in peer_cache if p not in ids]:
+        peer_cache.pop(pid, None)
+        peer_images.pop(pid, None)
+    for key in [k for k in peer_chara_images if k[0] not in ids]:
+        peer_chara_images.pop(key, None)
+    targets = [p for p in peers if p.get("id") and p.get("url")]
+    if targets:
+        # 応答しないピアが他のピアの鮮度を巻き添えにしないよう並列に取りに行く
+        with ThreadPoolExecutor(max_workers=MAX_PEERS) as pool:
+            list(pool.map(refresh_peer, targets))
+
+def peer_poll_loop():
+    while True:
+        try:
+            poll_peers_once()
+        except Exception as e:
+            print(f"[peers] loop error: {e}")
+        time.sleep(PEER_POLL_INTERVAL)
 
 # セキュリティモード(デフォルト: very_easy):
 #   none      … 認証なし(閲覧・書き込みとも自由)
@@ -156,11 +298,14 @@ def post_to_discord(content):
         discord_last_ok = False
         print(f"[Discord] error: {e}")
 
+# tsは自分のチャットとピアのチャットを1本の時系列にマージするための並び替えキー。
+# 表示は従来どおりtimeを使う
 def add_system_message(text):
     messages.append({
         "name": "",
         "text": text,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "ts": time.time(),
         "system": True,
     })
     post_to_discord(text)
@@ -199,6 +344,41 @@ def chara_custom(cid):
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
+# ピアの部屋画像を中継。実体は巡回スレッドが取得済みのバイト列なので、ここでは相手サーバーに触れない。
+# /room-image-preview と同じくGETに合言葉は載せない方針
+@app.route("/peer-room-image/<peer_id>.webp")
+def peer_room_image(peer_id):
+    img = peer_images.get(peer_id)
+    if not img or not find_peer(peer_id):
+        return jsonify({"error": "not found"}), 404
+    return Response(img["data"], mimetype="image/webp",
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
+
+# ピア参加者のカスタムキャラ画像を中継。人数分あって大半は使われないので巡回時には先読みせず、
+# 要求された時点で取りに行って (peer_id, cid) 単位でキャッシュする
+@app.route("/peer-chara/<peer_id>/<cid>.png")
+def peer_chara(peer_id, cid):
+    peer = find_peer(peer_id)
+    if not peer:
+        return jsonify({"error": "not found"}), 404
+    version = request.args.get("v", "")
+    cached = peer_chara_images.get((peer_id, cid))
+    if not cached or cached["version"] != version:
+        try:
+            data = fetch_peer_bytes(
+                f"{peer['url']}/chara-custom/{urllib.parse.quote(cid, safe='')}.png", PEER_IMAGE_MAX)
+        except Exception:
+            return jsonify({"error": "unavailable"}), 502
+        # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
+        if not data.startswith(PNG_MAGIC):
+            return jsonify({"error": "unavailable"}), 502
+        cached = {"data": data, "version": version}
+        peer_chara_images[(peer_id, cid)] = cached
+    return Response(cached["data"], mimetype="image/png",
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
+
 # Discord連携の現在状態: off=URL未設定 / on=設定済み / error=直近の送信が失敗(URL失効など)
 @app.route("/status")
 def get_status():
@@ -209,6 +389,27 @@ def get_status():
     else:
         discord = "on"
     return jsonify({"discord": discord, "roomImageVersion": room_image_version})
+
+# 巡回スレッドが貯めたピアの状態をまとめて返す。ここから相手サーバーへのアクセスは発生しないので、
+# クライアントの2秒pollと相手を叩く5秒間隔は完全に独立している
+@app.route("/world")
+def get_world():
+    peers = []
+    for peer in load_peers():
+        cached = peer_cache.get(peer.get("id"), {})
+        peers.append({
+            "id": peer.get("id"),
+            "name": peer.get("name") or urllib.parse.urlparse(peer.get("url", "")).netloc,
+            "slot": peer.get("slot", 0),
+            # 未取得はnull(「接続中」表示)、Falseは「接続できません」表示
+            "ok": cached.get("ok"),
+            # 部屋画像が中継できる状態か。取得前にクライアントが404を踏むのを避けるために返す
+            "hasImage": peer.get("id") in peer_images,
+            "board": cached.get("board", []),
+            "messages": cached.get("messages", []),
+            "roomImageVersion": cached.get("roomImageVersion", 0),
+        })
+    return jsonify({"peers": peers})
 
 @app.route("/messages", methods=["GET"])
 def get_messages():
@@ -228,6 +429,7 @@ def post_message():
         "name": name,
         "text": text,
         "time": datetime.now().strftime("%H:%M"),
+        "ts": time.time(),
     }
     messages.append(msg)
     post_to_discord(f"**{name}**: {text}")
@@ -328,6 +530,44 @@ def admin_set_room_image():
     add_system_message(f"🖼️ 管理者が部屋画像を {filename} に変更しました")
     return jsonify({"ok": True, "file": filename, "version": room_image_version})
 
+# ピア一覧の取得: 管理者合言葉必須(kick/room-imagesと同型のゲート)
+@app.route("/admin/peers", methods=["POST"])
+def admin_peers():
+    data = request.get_json()
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    peers = [{"id": p.get("id"), "url": p.get("url"), "name": p.get("name")} for p in load_peers()]
+    return jsonify({"peers": peers, "max": MAX_PEERS})
+
+# 接続・解除の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
+@app.route("/admin/peer", methods=["POST"])
+def admin_peer():
+    data = request.get_json() or {}
+    supplied = (data.get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    action = (data.get("action") or "").strip()
+    if action == "add":
+        url = normalize_peer_url(data.get("url"))
+        if not url:
+            return jsonify({"error": "invalid url"}), 400
+        # 名前はシステムメッセージとDiscordにも載るので、改行を潰して長さを切る
+        name = " ".join((data.get("name") or "").split())[:40] or urllib.parse.urlparse(url).netloc
+        result = add_peer(url, name)
+        if result.get("error") == "duplicate":
+            return jsonify({"error": "already connected"}), 400
+        if result.get("error") == "full":
+            return jsonify({"error": "peer limit reached"}), 400
+        add_system_message(f"🌏 管理者が「{name}」とつながりました")
+        return jsonify({"ok": True, "peer": result["peer"]})
+    if action == "remove":
+        removed = remove_peer((data.get("id") or "").strip())
+        if removed:
+            add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
+        return jsonify({"ok": True})
+    return jsonify({"error": "invalid action"}), 400
+
 @app.route("/board/leave", methods=["POST"])
 def leave_board():
     data = request.get_json()
@@ -351,7 +591,11 @@ def leave_board():
     add_system_message(f"🔴 {entry['name']} がルーム{entry['room']}から退室")
     return jsonify({"ok": True, "record": record})
 
+# waitress以外から起動された場合も巡回が回るよう、__main__ではなくモジュール読み込み時に開始する
+threading.Thread(target=peer_poll_loop, daemon=True).start()
+
 if __name__ == "__main__":
     from waitress import serve
-    print("もくもくサーバー起動: http://127.0.0.1:5000 (停止は Ctrl+C)", flush=True)
-    serve(app, host="127.0.0.1", port=5000)
+    port = int(os.environ.get("PORT", "5000"))
+    print(f"もくもくサーバー起動: http://127.0.0.1:{port} (停止は Ctrl+C)", flush=True)
+    serve(app, host="127.0.0.1", port=port)

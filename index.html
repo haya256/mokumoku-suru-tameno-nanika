@@ -23,18 +23,117 @@
       aspect-ratio: 1 / 1;
     }
 
-    #roomView img {
+    /* ワールドマップ: 中央(インデックス4)が自分のルーム、周囲8マスがつながった相手ルーム。
+       focus-modeでは選ばれた1マスだけをグリッド全体に広げてフルサイズ表示する */
+    #worldMap {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      gap: 3px;
+      /* 未接続のマスとほぼ同色にして、霧の領域がひと続きの土地に見えるようにする */
+      background: #9fa099;
+    }
+
+    #worldMap.focus-mode { gap: 0; background: none; }
+    #worldMap.focus-mode .tile { display: none; }
+
+    #worldMap.focus-mode .tile.focused {
+      display: block;
+      grid-column: 1 / 4;
+      grid-row: 1 / 4;
+    }
+
+    .tile {
+      position: relative;
+      overflow: hidden;
+      background: #eee;
+      cursor: pointer;
+    }
+
+    .tile.focused, .tile.empty { cursor: default; }
+    .tile.empty > img, .tile.empty > .room-overlay,
+    .tile.empty > .tile-label, .tile.empty > .tile-status { display: none; }
+
+    /* 未接続のマスは「まだ何も無い土地に霧がかかっている」見た目にする。
+       本物の部屋画像と張り合わないよう、彩度もコントラストも低めに抑える */
+    .tile.empty {
+      background-color: #a5a69f;
+      background-image:
+        radial-gradient(ellipse 70% 45% at 28% 32%, rgba(255,255,255,0.32), rgba(255,255,255,0) 70%),
+        radial-gradient(ellipse 60% 40% at 74% 72%, rgba(255,255,255,0.24), rgba(255,255,255,0) 70%),
+        repeating-linear-gradient(45deg, rgba(0,0,0,0.02) 0 7px, rgba(0,0,0,0) 7px 14px);
+    }
+
+    .tile.empty::after {
+      content: "?";
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+      /* 霧の濃淡に関係なく一定の沈み具合になるよう、色ではなくわずかな黒を重ねる。
+         ぼかすと輪郭が広がって薄く見えるぶん、不透明度は少し上げてある */
+      color: rgba(0, 0, 0, 0.13);
+      filter: blur(1px);
+    }
+
+    .tile > img {
       display: block;
       width: 100%;
       height: 100%;
       image-rendering: pixelated;
     }
 
-    #roomImageBtn {
+    /* 中継画像がまだ届いていない間(404)に壊れた画像アイコンを出さない */
+    .tile > img.missing { visibility: hidden; }
+    .tile.offline > img { filter: grayscale(1); opacity: 0.35; }
+
+    /* 上端は「← マップへ」と管理者ボタンが占めるので、ルーム名は下端に置く
+       (キャラは下端から14%の位置に立つので重ならない) */
+    .tile-label {
       position: absolute;
-      top: 8px;
-      right: 8px;
-      z-index: 2;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 1;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      pointer-events: none;
+    }
+
+    .tile.focused .tile-label { font-size: 0.85rem; }
+    #worldMap:not(.focus-mode) .tile.self .tile-label { background: rgba(40, 90, 60, 0.7); }
+    /* 自分のルームを拡大しているときは従来の全画面表示と同じ見た目にする */
+    #worldMap.focus-mode .tile.self .tile-label { display: none; }
+
+    .tile-status {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.55);
+      color: #666;
+      font-size: 0.7rem;
+      pointer-events: none;
+    }
+
+    /* displayを指定した時点でブラウザ既定の [hidden]{display:none} を上書きしてしまうので、
+       hidden属性を効かせるには自分で打ち消す必要がある */
+    .tile-status[hidden] { display: none; }
+
+    #backToMapBtn, #adminBar button {
       background: rgba(255,255,255,0.85);
       color: #333;
       border: 1px solid #999;
@@ -44,13 +143,33 @@
       cursor: pointer;
     }
 
-    #roomImageBtn:hover { background: #fff; }
+    #backToMapBtn:hover, #adminBar button:hover { background: #fff; }
 
-    #roomImagePanel {
+    #backToMapBtn {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 4;
+    }
+
+    #adminBar {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 4;
+      display: flex;
+      gap: 6px;
+    }
+
+    /* 部屋画像の差し替えは自分のルームを見ているときだけ意味があるので、そのときだけ出す */
+    #roomImageBtn { display: none; }
+    #roomView.showing-self #roomImageBtn { display: block; }
+
+    #roomImagePanel, #worldPanel {
       position: absolute;
       top: 36px;
       right: 8px;
-      z-index: 3;
+      z-index: 5;
       background: #fff;
       border: 1px solid #999;
       border-radius: 6px;
@@ -74,7 +193,53 @@
     #roomImagePanel img.selected { border-color: #3a3; }
     #roomImagePanel img:hover { opacity: 0.85; }
 
-    #roomOverlay {
+    #worldPanel {
+      flex-direction: column;
+      flex-wrap: nowrap;
+      width: min(320px, calc(100% - 16px));
+      font-size: 0.8rem;
+    }
+
+    #worldPanel .peer-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #worldPanel .peer-info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #worldPanel .peer-empty { color: #aaa; }
+
+    #worldPanel .peer-del {
+      flex-shrink: 0;
+      background: #fff;
+      color: #c33;
+      border: 1px solid #c33;
+      border-radius: 4px;
+      padding: 1px 8px;
+      font-size: 0.75rem;
+    }
+
+    #worldPanel .peer-del:hover { background: #fee; }
+
+    #worldPanel .peer-add {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      border-top: 1px dashed #ccc;
+      padding-top: 8px;
+    }
+
+    #worldPanel .peer-add input { font-size: 0.8rem; }
+    #worldPanel .peer-add button { padding: 5px 10px; font-size: 0.8rem; }
+
+    .room-overlay {
       position: absolute;
       inset: 0;
       display: grid;
@@ -88,9 +253,15 @@
       flex-direction: column;
       align-items: center;
       justify-content: flex-end;
-      /* キャラ下端を部屋の高さの14%に保つ(バッジは絶対配置なので高さ分を足す) */
-      padding-bottom: calc(14% + 24px);
+      /* キャラ下端を部屋の高さの14%に保つ */
+      padding-bottom: 14%;
     }
+
+    /* 縮小表示のマスでは名前バッジが部屋に対して大きすぎるので、拡大したマスだけで出す
+       (バッジは絶対配置なので、出すときはその高さぶんキャラを押し上げる) */
+    .cell .badge { display: none; }
+    .tile.focused .cell { padding-bottom: calc(14% + 24px); }
+    .tile.focused .cell .badge { display: block; }
 
     /* キャラクターのスプライトシート: 9列×6行。1キャラ=3列×2行(6ポーズ)のブロックが部屋と同じ3×3配置 */
     .cell .chara {
@@ -255,6 +426,23 @@
       background: #fee;
     }
 
+    /* つながった相手ルーム由来の行・発言は、自分のルームのものと色で区別する */
+    .entry.remote .room { background: #4a6b8a; }
+
+    .msg.remote { border-left: 3px solid #4a6b8a; }
+    .msg.system.remote { border-left: none; }
+
+    .msg .from {
+      display: inline-block;
+      background: #4a6b8a;
+      color: #fff;
+      border-radius: 3px;
+      padding: 0 5px;
+      margin-right: 5px;
+      font-size: 0.7rem;
+      font-weight: normal;
+    }
+
     #messages {
       flex: 1;
       overflow-y: auto;
@@ -293,7 +481,8 @@
       background: none;
       border-radius: 0;
       align-self: center;
-      max-width: none;
+      /* 中央寄せなので、はみ出すと左右とも切れてしまう。幅を抑えて末尾だけ「…」にする */
+      max-width: 100%;
       padding: 2px 12px;
       font-size: 0.8rem;
       color: #888;
@@ -469,8 +658,8 @@
 </head>
 <body>
   <div id="roomView">
-    <img src="/room-image.webp" alt="ルーム一覧">
-    <div id="roomOverlay"></div>
+    <div id="worldMap"></div>
+    <button type="button" id="backToMapBtn" hidden>← マップへ</button>
   </div>
   <div id="main">
   <header>もくもく会 <span id="discordStatus"></span></header>
@@ -540,9 +729,17 @@
     const closeRecordBtn = document.getElementById("closeRecordBtn");
     const discordStatusEl = document.getElementById("discordStatus");
     const roomViewEl = document.getElementById("roomView");
+    const worldMapEl = document.getElementById("worldMap");
+    const backToMapBtn = document.getElementById("backToMapBtn");
 
     let editing = false;
     let lastEntries = [];
+    // つながった相手ルームの最新状態(/world の戻り値)。0件なら従来どおり自分のルームの全画面表示
+    let peers = [];
+    // 拡大表示中のマス。null=ワールドマップ表示 / "self"=自分のルーム / それ以外はピアのid
+    let focusedKey = null;
+    let localMessages = [];
+    let selfRoomImageSrc = "/room-image.webp";
     // 合言葉欄に管理者合言葉を入れた場合にtrueになる(サーバー側が都度判定。ここはボタン表示のためだけのキャッシュ)
     let isAdmin = false;
     let prevIsAdmin = false; // isAdminの変化点でだけボタンを付け外しする(毎ポーリングで作り直さない)
@@ -562,56 +759,85 @@
       clientId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
       localStorage.setItem("mokumoku-id", clientId);
     }
-    const roomOverlayEl = document.getElementById("roomOverlay");
-
     const ROOM_COUNT = 9;
-    const roomCells = [];
-    for (let i = 1; i <= ROOM_COUNT; i++) {
-      const cell = document.createElement("div");
-      cell.className = "cell";
-      roomOverlayEl.appendChild(cell);
-      roomCells.push(cell);
+    // 3×3マップの中央は自分のルーム固定。ピアのslot(0〜7)は周囲8マスに対応する
+    const SELF_INDEX = 4;
+    const SLOT_TO_INDEX = [0, 1, 2, 3, 5, 6, 7, 8];
+
+    // マスは9つ作ったきり使い回す。毎pollで作り直すとキャラのCSSアニメーションがリセットされるため
+    const tiles = [];
+    for (let i = 0; i < 9; i++) {
+      const el = document.createElement("div");
+      el.className = "tile empty";
+      const img = document.createElement("img");
+      img.alt = "";
+      img.addEventListener("error", () => img.classList.add("missing"));
+      img.addEventListener("load", () => img.classList.remove("missing"));
+      const overlay = document.createElement("div");
+      overlay.className = "room-overlay";
+      for (let r = 0; r < ROOM_COUNT; r++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        overlay.appendChild(cell);
+      }
+      const label = document.createElement("span");
+      label.className = "tile-label";
+      const status = document.createElement("span");
+      status.className = "tile-status";
+      status.hidden = true;
+      el.append(img, overlay, label, status);
+      worldMapEl.appendChild(el);
+      tiles.push({ el, img, overlay, label, status, cells: [...overlay.children], key: null, lastState: "" });
     }
 
-    let lastCount = 0;
+    let lastMsgSig = "";
 
     function render(msgs) {
-      if (msgs.length === lastCount) return;
+      // マージ後は件数だけでは変化を判定できない(ピアの取得遅れで途中に挿入されうる)ため、
+      // 件数と末尾のタイムスタンプを繋げたシグネチャで比べる
+      const sig = `${msgs.length}|${msgs.length ? msgs[msgs.length - 1].ts : 0}`;
+      if (sig === lastMsgSig) return;
+      lastMsgSig = sig;
       messagesEl.innerHTML = "";
       msgs.forEach(m => {
         const div = document.createElement("div");
+        // m.from はピア由来のときだけ入る発信元ルーム名
+        const from = m.from ? `<span class="from">${esc(m.from)}</span>` : "";
+        const remote = m.from ? " remote" : "";
         if (m.system) {
-          div.className = "msg system";
-          div.innerHTML = `<span class="stamp">${esc(m.time)}</span>${esc(m.text)}`;
+          div.className = `msg system${remote}`;
+          div.innerHTML = `<span class="stamp">${esc(m.time)}</span>${from}${esc(m.text)}`;
         } else {
-          div.className = "msg";
-          div.innerHTML = `<div class="meta"><span>${esc(m.name)}</span> ${esc(m.time)}</div><div class="text">${esc(m.text)}</div>`;
+          div.className = `msg${remote}`;
+          div.innerHTML = `<div class="meta">${from}<span>${esc(m.name)}</span> ${esc(m.time)}</div><div class="text">${esc(m.text)}</div>`;
         }
         messagesEl.appendChild(div);
       });
-      lastCount = msgs.length;
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    let lastRoomState = "";
-
-    function renderRooms(entries) {
-      // ポーズ(0〜2)は入室時にサーバーが決めて退室まで固定
-      const occupants = entries.map(e => ({ id: e.id, room: e.room, name: e.name, task: e.task, pose: e.pose || 0, imgv: e.imgv || 0 }));
+    // 1部屋ぶんの中身(キャラと名前バッジ)を描く。自分のルームにもピアのルームにも使う。
+    // charaUrl はカスタム画像のURLを組み立てる関数(自分とピアで参照先が変わる)
+    function renderRoomInto(tile, entries, charaUrl) {
+      // ポーズ(0〜2)は入室時にサーバーが決めて退室まで固定。ピア由来の値は信用せず範囲に丸める
+      const occupants = (entries || []).map(e => ({
+        id: String(e.id ?? ""), room: e.room, name: String(e.name ?? ""), task: String(e.task ?? ""),
+        pose: Math.min(2, Math.max(0, Math.trunc(e.pose) || 0)), imgv: e.imgv || 0,
+      }));
       // 変化がなければDOMを触らない(作り直すとCSSアニメーションがリセットされるため)
       const state = JSON.stringify(occupants);
-      if (state === lastRoomState) return;
-      lastRoomState = state;
-      roomCells.forEach(cell => cell.innerHTML = "");
+      if (state === tile.lastState) return;
+      tile.lastState = state;
+      tile.cells.forEach(cell => cell.innerHTML = "");
       occupants.forEach(o => {
-        const cell = roomCells[o.room - 1];
+        const cell = tile.cells[o.room - 1];
         if (!cell) return;
         const chara = document.createElement("div");
         chara.className = "chara";
         if (o.imgv) {
           // アップロードされたカスタム画像(imgvはキャッシュバスター兼差分検知用)
           chara.classList.add("custom");
-          chara.style.backgroundImage = `url(/chara-custom/${encodeURIComponent(o.id)}.png?v=${o.imgv})`;
+          chara.style.backgroundImage = `url(${charaUrl(o)})`;
         } else {
           const col = ((o.room - 1) % 3) * 3 + o.pose;
           const row = Math.floor((o.room - 1) / 3) * 2;
@@ -627,21 +853,107 @@
       });
     }
 
+    function selfCharaUrl(o) {
+      return `/chara-custom/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
+    }
+
+    function peerCharaUrl(peerId) {
+      return o => `/peer-chara/${encodeURIComponent(peerId)}/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
+    }
+
+    // ピアをマスに割り当てる。slotが重複・欠損していても(設定を手で編集した場合など)
+    // 空いているマスに寄せて必ずどこかに出す
+    function assignTiles() {
+      const assigned = new Array(9).fill(null);
+      assigned[SELF_INDEX] = { self: true };
+      const overflow = [];
+      peers.forEach(p => {
+        const idx = SLOT_TO_INDEX[p.slot];
+        if (idx !== undefined && !assigned[idx]) assigned[idx] = { peer: p };
+        else overflow.push(p);
+      });
+      overflow.forEach(p => {
+        const idx = assigned.findIndex(a => !a);
+        if (idx >= 0) assigned[idx] = { peer: p };
+      });
+      return assigned;
+    }
+
+    function setClass(el, cls) {
+      if (el.className !== cls) el.className = cls;
+    }
+
+    // サーバーが相手の部屋画像をまだ中継できない間はsrcを付けない。
+    // ここで404を踏ませると、あとで取得できてもURLが変わらず再読み込みが走らないため、
+    // 画像が出ないまま(キャラだけが浮いた状態)になってしまう
+    function setPeerTileImage(tile, p) {
+      if (!p.hasImage) {
+        if (tile.img.getAttribute("src")) tile.img.removeAttribute("src");
+        tile.img.classList.add("missing");
+        return;
+      }
+      const src = `/peer-room-image/${encodeURIComponent(p.id)}.webp?v=${p.roomImageVersion || 0}`;
+      if (tile.img.getAttribute("src") !== src) tile.img.src = src;
+    }
+
+    const PEER_STATUS = { false: "接続できません", null: "接続中…", undefined: "接続中…" };
+
+    function renderWorld() {
+      // ピアが1つも無いときはマップにせず、今までどおり自分のルームを全画面で出す
+      const focus = peers.length === 0 ? "self" : focusedKey;
+      worldMapEl.classList.toggle("focus-mode", focus !== null);
+      assignTiles().forEach((slot, i) => {
+        const tile = tiles[i];
+        if (!slot) {
+          // 接続を解除した直後は「接続できません」が残っているので消しておく
+          if (tile.key !== null) { tile.key = null; tile.lastState = ""; tile.status.hidden = true; }
+          setClass(tile.el, "tile empty");
+          return;
+        }
+        const key = slot.self ? "self" : slot.peer.id;
+        if (tile.key !== key) { tile.key = key; tile.lastState = ""; }
+        const focused = focus === key ? " focused" : "";
+        if (slot.self) {
+          if (tile.img.getAttribute("src") !== selfRoomImageSrc) tile.img.src = selfRoomImageSrc;
+          setClass(tile.el, `tile self${focused}`);
+          tile.label.textContent = "このルーム";
+          tile.status.hidden = true;
+          renderRoomInto(tile, lastEntries, selfCharaUrl);
+        } else {
+          const p = slot.peer;
+          setPeerTileImage(tile, p);
+          setClass(tile.el, `tile peer${p.ok === false ? " offline" : ""}${focused}`);
+          tile.label.textContent = p.ok === true ? `${p.name} (${(p.board || []).length}人)` : p.name;
+          tile.status.hidden = p.ok === true;
+          tile.status.textContent = PEER_STATUS[p.ok] || "";
+          renderRoomInto(tile, p.board, peerCharaUrl(p.id));
+        }
+      });
+      roomViewEl.classList.toggle("showing-self", focus === "self");
+      backToMapBtn.hidden = !(peers.length > 0 && focusedKey !== null);
+    }
+
     function renderBoard(entries) {
       lastEntries = entries;
-      renderRooms(entries);
+      renderWorld();
       updateMyStatus();
-      if (entries.length === 0) {
+      // 自分のルームの行に、つながった相手ルームの行を続ける
+      const rows = [
+        ...entries.map(e => ({ e, room: `Room ${e.room}`, local: true })),
+        ...peers.flatMap(p => (p.board || []).map(e => ({ e, room: `${p.name} #${e.room}`, local: false }))),
+      ];
+      if (rows.length === 0) {
         entriesEl.innerHTML = `<div class="empty">まだ誰ももくもくしていません</div>`;
         return;
       }
       entriesEl.innerHTML = "";
-      entries.forEach(e => {
+      rows.forEach(({ e, room, local }) => {
         const div = document.createElement("div");
-        div.className = "entry";
+        div.className = local ? "entry" : "entry remote";
         const when = `${esc(e.start)}〜${esc(e.end || "?")}`;
-        div.innerHTML = `<span class="room">Room ${e.room}</span><span class="who">${esc(e.name)}</span><span class="when">${when}</span><span class="what">${esc(e.task)}</span>`;
-        if (isAdmin && e.id !== clientId) {
+        div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span><span class="when">${when}</span><span class="what">${esc(e.task)}</span>`;
+        // 相手サーバーの参加者は操作できないので強制退出ボタンは出さない
+        if (local && isAdmin && e.id !== clientId) {
           const kickBtn = document.createElement("button");
           kickBtn.type = "button";
           kickBtn.className = "kick";
@@ -652,6 +964,36 @@
         entriesEl.appendChild(div);
       });
     }
+
+    // 自分のチャットとピアのチャットを1本の時系列にまとめる
+    function mergedMessages() {
+      const all = localMessages.map(m => ({ ...m, ts: msgTs(m), from: null }));
+      peers.forEach(p => (p.messages || []).forEach(m => all.push({ ...m, ts: msgTs(m), from: p.name })));
+      return all.sort((a, b) => a.ts - b.ts);
+    }
+
+    // tsを持たない旧版のピア向けフォールバック。timeのHH:MMを今日の時刻として解釈する
+    function msgTs(m) {
+      if (typeof m.ts === "number") return m.ts;
+      const hhmm = String(m.time || "").match(/(\d{1,2}):(\d{2})/);
+      if (!hhmm) return 0;
+      const d = new Date();
+      d.setHours(+hhmm[1], +hhmm[2], 0, 0);
+      return d.getTime() / 1000;
+    }
+
+    worldMapEl.addEventListener("click", e => {
+      if (peers.length === 0) return; // ピアなしのときは常に自分のルームの全画面
+      const tile = tiles.find(t => t.el === e.target.closest(".tile"));
+      if (!tile || !tile.key || focusedKey === tile.key) return;
+      focusedKey = tile.key;
+      renderWorld();
+    });
+
+    backToMapBtn.addEventListener("click", () => {
+      focusedKey = null;
+      renderWorld();
+    });
 
     // 入室状態に応じてフォームを切替:
     //   入室前     → 入室フォームのみ(チャット不可)
@@ -675,8 +1017,9 @@
       }
     }
 
+    // 相手ルームから中継されてきた文字列も必ずここを通す。型が文字列とは限らないので String() で受ける
     function esc(s) {
-      return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     }
 
     function nowHHMM() {
@@ -750,7 +1093,8 @@
       setTimeout(() => {
         roomImageVersion = version;
         pendingImageVersion = null;
-        roomViewEl.querySelector("img").src = `/room-image.webp?v=${version}`;
+        selfRoomImageSrc = `/room-image.webp?v=${version}`;
+        renderWorld();
       }, delay);
     }
 
@@ -772,7 +1116,7 @@
           isAdmin = false;
         }
       }
-      syncRoomImageButton();
+      syncAdminButtons();
     }
 
     async function kickUser(id, name) {
@@ -792,24 +1136,35 @@
       await poll();
     }
 
-    // isAdminがtrue→falseに変化した瞬間だけボタン(と開いていればパネル)を除去/追加する。
+    // isAdminが変化した瞬間だけボタン(と開いていればパネル)を除去/追加する。
     // renderBoardのkickボタンと違い、2秒ごとのpollで作り直すとパネルの開閉状態が消えてしまうため、
     // 「変化があったときだけ」DOMを触る設計にする
-    function syncRoomImageButton() {
+    function syncAdminButtons() {
       if (isAdmin === prevIsAdmin) return;
       prevIsAdmin = isAdmin;
-      const existingBtn = document.getElementById("roomImageBtn");
-      if (isAdmin && !existingBtn) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.id = "roomImageBtn";
-        btn.textContent = "部屋画像を変更";
-        btn.addEventListener("click", toggleRoomImagePanel);
-        roomViewEl.appendChild(btn);
+      const existingBar = document.getElementById("adminBar");
+      if (isAdmin && !existingBar) {
+        const bar = document.createElement("div");
+        bar.id = "adminBar";
+        bar.append(
+          adminButton("roomImageBtn", "部屋画像を変更", toggleRoomImagePanel),
+          adminButton("worldBtn", "ワールド設定", toggleWorldPanel),
+        );
+        roomViewEl.appendChild(bar);
       } else if (!isAdmin) {
-        existingBtn?.remove();
+        existingBar?.remove();
         document.getElementById("roomImagePanel")?.remove();
+        document.getElementById("worldPanel")?.remove();
       }
+    }
+
+    function adminButton(id, label, onClick) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.id = id;
+      btn.textContent = label;
+      btn.addEventListener("click", onClick);
+      return btn;
     }
 
     async function toggleRoomImagePanel() {
@@ -863,16 +1218,114 @@
       // scheduleRoomImageRefreshが「既に反映済み」と判定して再取得しないよう基準値も更新する
       roomImageVersion = data.version;
       pendingImageVersion = null;
-      roomViewEl.querySelector("img").src = `/room-image.webp?v=${data.version}`;
+      selfRoomImageSrc = `/room-image.webp?v=${data.version}`;
+      renderWorld();
+    }
+
+    const PEER_ERRORS = {
+      "invalid url": "URLの形式が正しくありません(https://ホスト名 の形で入力してください)",
+      "already connected": "そのルームとは既につながっています",
+      "peer limit reached": "つなげるルームは8つまでです",
+      "admin required": "管理者合言葉が必要です",
+    };
+
+    async function toggleWorldPanel() {
+      const existing = document.getElementById("worldPanel");
+      if (existing) { existing.remove(); return; }
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      let data;
+      try {
+        const res = await fetch("/admin/peers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase }),
+        });
+        if (!res.ok) { alert("ワールド設定の取得に失敗しました"); return; }
+        data = await res.json();
+      } catch {
+        alert("ワールド設定の取得に失敗しました");
+        return;
+      }
+      const panel = document.createElement("div");
+      panel.id = "worldPanel";
+      const list = data.peers || [];
+      if (list.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "peer-empty";
+        empty.textContent = "まだどのルームともつながっていません";
+        panel.appendChild(empty);
+      }
+      list.forEach(p => {
+        const row = document.createElement("div");
+        row.className = "peer-row";
+        const info = document.createElement("span");
+        info.className = "peer-info";
+        info.textContent = p.name;
+        info.title = p.url;
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "peer-del";
+        del.textContent = "解除";
+        del.addEventListener("click", () => changePeer({ action: "remove", id: p.id }));
+        row.append(info, del);
+        panel.appendChild(row);
+      });
+      const urlInput = document.createElement("input");
+      urlInput.type = "text";
+      urlInput.placeholder = "相手ルームのURL (https://...)";
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.placeholder = "表示名 (任意)";
+      const submit = () => changePeer({ action: "add", url: urlInput.value.trim(), name: nameInput.value.trim() });
+      [urlInput, nameInput].forEach(el => el.addEventListener("keydown", e => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
+      }));
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.textContent = "つなぐ";
+      addBtn.addEventListener("click", submit);
+      const add = document.createElement("div");
+      add.className = "peer-add";
+      add.append(urlInput, nameInput, addBtn);
+      panel.appendChild(add);
+      roomViewEl.appendChild(panel);
+    }
+
+    async function changePeer(body) {
+      if (body.action === "add" && !body.url) { alert("相手ルームのURLを入力してください"); return; }
+      if (body.action === "remove" && !confirm("この接続を解除しますか？")) return;
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      try {
+        const res = await fetch("/admin/peer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, passphrase }),
+        });
+        const data = await res.json();
+        if (!res.ok) { alert(PEER_ERRORS[data.error] || "操作に失敗しました"); return; }
+      } catch {
+        alert("操作に失敗しました");
+        return;
+      }
+      document.getElementById("worldPanel")?.remove();
+      await poll();
+      toggleWorldPanel(); // 更新後の一覧を出し直す
     }
 
     async function poll() {
       try {
-        const [msgRes, boardRes, statusRes] = await Promise.all([fetch("/messages"), fetch("/board"), fetch("/status")]);
+        const [msgRes, boardRes, statusRes, worldRes] = await Promise.all([
+          fetch("/messages"), fetch("/board"), fetch("/status"), fetch("/world"),
+        ]);
         await checkAdmin();
-        render(await msgRes.json());
+        localMessages = await msgRes.json();
+        const world = await worldRes.json();
+        peers = Array.isArray(world.peers) ? world.peers : [];
+        // 拡大表示中のピアが解除されたらマップ表示に戻す
+        if (focusedKey && focusedKey !== "self" && !peers.some(p => p.id === focusedKey)) focusedKey = null;
         renderBoard(await boardRes.json());
         renderStatus(await statusRes.json());
+        render(mergedMessages());
       } catch {}
     }
 
@@ -1003,6 +1456,7 @@
       recordRow.style.display = "none";
     });
 
+    renderWorld(); // 初回pollを待たずに自分のルームを出す
     poll();
     setInterval(poll, 2000);
   </script>
