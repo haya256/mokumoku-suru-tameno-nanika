@@ -5,7 +5,7 @@
     "admin_passphrase_file": "config/管理者合言葉.txt"
   },
   "appearance": {
-    "room_image": "assets/room-image-1.png"
+    "room_image": "assets/room-image-1.webp"
   },
   "deploy": {
     "region": "ap-northeast-1",

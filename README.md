@@ -302,7 +302,7 @@ cp config/settings.sample.json config/settings.json
     "passphrase_file": "config/合言葉.txt"
   },
   "appearance": {
-    "room_image": "assets/room-image-1.png"
+    "room_image": "assets/room-image-1.webp"
   }
 }
 ```
@@ -313,7 +313,7 @@ cp config/settings.sample.json config/settings.json
 | `security.mode: "none"` | 完全に認証なし。合言葉ファイルがあっても聞かれません |
 | `security.passphrase_file` | 合言葉を書いたファイルの場所（既定: `config/合言葉.txt`） |
 | `security.admin_passphrase_file` | 管理者合言葉を書いたファイルの場所（既定: `config/管理者合言葉.txt`）。詳しくは次の「管理者合言葉を設定する」を参照 |
-| `appearance.room_image` | 画面左に表示する部屋の画像（既定: `assets/room-image-1.png`）。`assets/room-image-2.png` に変えたり、自分で用意した画像のパスを指定できます |
+| `appearance.room_image` | 画面左に表示する部屋の画像（既定: `assets/room-image-1.webp`）。`assets/room-image-2.webp` に変えたり、自分で用意した画像のパスを指定できます |
 
 設定の変更はサーバー再起動なしで反映されます（部屋の画像はブラウザの再読み込みで切り替わります）。なお `config/` ディレクトリはgit管理外なので、合言葉をうっかり公開してしまう心配はありません。
 

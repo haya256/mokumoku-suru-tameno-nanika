@@ -1,6 +1,7 @@
 import base64
 import binascii
 import hmac
+import mimetypes
 import os
 import random
 import re
@@ -15,6 +16,10 @@ from datetime import datetime
 # サーバーのOSタイムゾーン(EC2は既定でUTC)に関わらず、入退室記録をJST(クライアント側の時刻)と揃える
 os.environ["TZ"] = "Asia/Tokyo"
 time.tzset()
+
+# Python標準のmimetypesは.webpを認識しない(3.12時点)ため、Content-Typeが正しく付くよう明示登録する。
+# 未登録のままだとブラウザがimgタグで表示できない形で配信されてしまう
+mimetypes.add_type("image/webp", ".webp")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
@@ -34,7 +39,7 @@ SETTINGS_FILE = "config/settings.json"
 DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
 DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
 ROOM_IMAGE_DIR = "assets"
-ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.png$")
+ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
 _settings_write_lock = threading.Lock()
 
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
@@ -167,7 +172,7 @@ def index():
 # 部屋の画像は config/settings.json の appearance.room_image で差し替え可能(再起動不要)
 @app.route("/room-image.png")
 def room_image():
-    path = load_settings().get("appearance", {}).get("room_image") or "assets/room-image-1.png"
+    path = load_settings().get("appearance", {}).get("room_image") or "assets/room-image-1.webp"
     directory, filename = os.path.split(path)
     return send_from_directory(directory or ".", filename)
 
@@ -304,7 +309,7 @@ def admin_room_images():
     supplied = ((data or {}).get("passphrase") or "").strip()
     if not is_admin_passphrase(supplied):
         return jsonify({"error": "admin required"}), 403
-    current_path = load_settings().get("appearance", {}).get("room_image") or f"{ROOM_IMAGE_DIR}/room-image-1.png"
+    current_path = load_settings().get("appearance", {}).get("room_image") or f"{ROOM_IMAGE_DIR}/room-image-1.webp"
     return jsonify({"images": list_room_images(), "current": os.path.basename(current_path)})
 
 # 画像変更の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
