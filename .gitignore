@@ -19,3 +19,7 @@ data/
 
 # EC2自動デプロイの実行中インスタンス情報（非公開・ローカル限定）
 deploy/.current_instance
+
+.claude/
+
+.devcontainer/
