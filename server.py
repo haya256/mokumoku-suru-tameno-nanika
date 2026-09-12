@@ -170,14 +170,14 @@ def index():
     return send_from_directory(".", "index.html")
 
 # 部屋の画像は config/settings.json の appearance.room_image で差し替え可能(再起動不要)
-@app.route("/room-image.png")
+@app.route("/room-image.webp")
 def room_image():
     path = load_settings().get("appearance", {}).get("room_image") or "assets/room-image-1.webp"
     directory, filename = os.path.split(path)
     return send_from_directory(directory or ".", filename)
 
 # 選択パネル用のプレビュー配信。list_room_images()に含まれるファイル名以外は404にする。
-# 画像バイト自体は/room-image.pngと同様に非機密の装飾素材なので認証は課さない
+# 画像バイト自体は/room-image.webpと同様に非機密の装飾素材なので認証は課さない
 # (GETのURL/クエリに合言葉を乗せる設計はログ等に残るリスクがあり、既存のPOST body方式に反するため)
 @app.route("/room-image-preview/<name>")
 def room_image_preview(name):

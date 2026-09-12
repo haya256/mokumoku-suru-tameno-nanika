@@ -469,7 +469,7 @@
 </head>
 <body>
   <div id="roomView">
-    <img src="/room-image.png" alt="ルーム一覧">
+    <img src="/room-image.webp" alt="ルーム一覧">
     <div id="roomOverlay"></div>
   </div>
   <div id="main">
@@ -750,7 +750,7 @@
       setTimeout(() => {
         roomImageVersion = version;
         pendingImageVersion = null;
-        roomViewEl.querySelector("img").src = `/room-image.png?v=${version}`;
+        roomViewEl.querySelector("img").src = `/room-image.webp?v=${version}`;
       }, delay);
     }
 
@@ -863,7 +863,7 @@
       // scheduleRoomImageRefreshが「既に反映済み」と判定して再取得しないよう基準値も更新する
       roomImageVersion = data.version;
       pendingImageVersion = null;
-      roomViewEl.querySelector("img").src = `/room-image.png?v=${data.version}`;
+      roomViewEl.querySelector("img").src = `/room-image.webp?v=${data.version}`;
     }
 
     async function poll() {
