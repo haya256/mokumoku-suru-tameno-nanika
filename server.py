@@ -3,6 +3,9 @@ import binascii
 import hmac
 import os
 import random
+import re
+import tempfile
+import threading
 import time
 import urllib.request
 import json as _json
@@ -20,6 +23,7 @@ board = {}
 # カスタムキャラ画像は board と同じライフサイクル(退室で破棄、再起動で消える)
 custom_images = {}  # cid -> {"data": bytes, "v": int}
 _img_seq = 0  # キャッシュバスター用の通し番号。退室しても巻き戻さない(再入室時のキャッシュ誤爆防止)
+room_image_version = 0  # 部屋画像が変更されるたびに+1(クライアントが変化検知するためだけの値)
 MAX_IMAGE_B64 = 700_000
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
@@ -29,6 +33,9 @@ discord_last_ok = None
 SETTINGS_FILE = "config/settings.json"
 DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
 DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
+ROOM_IMAGE_DIR = "assets"
+ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.png$")
+_settings_write_lock = threading.Lock()
 
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
 def load_settings():
@@ -38,6 +45,33 @@ def load_settings():
     except (OSError, ValueError) as e:
         print(f"[settings] {SETTINGS_FILE} を読めないためデフォルト(mode=very_easy)で動作: {e}")
         return {}
+
+# settings.jsonへの書き込みは他キー(security/deploy等)を保持したまま部分更新する。
+# tmpファイル+os.replaceでアトミックに置換し、書き込み途中でプロセスが落ちても壊れたJSONを残さない
+def save_settings(settings):
+    directory = os.path.dirname(SETTINGS_FILE) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".settings-", suffix=".json.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump(settings, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, SETTINGS_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+# appearance.room_imageだけを部分更新する。filenameはlist_room_images()で検証済みの前提
+def set_room_image_setting(filename):
+    with _settings_write_lock:
+        try:
+            with open(SETTINGS_FILE, encoding="utf-8") as f:
+                settings = _json.load(f)
+        except (OSError, ValueError):
+            settings = {}
+        settings.setdefault("appearance", {})["room_image"] = f"{ROOM_IMAGE_DIR}/{filename}"
+        save_settings(settings)
 
 # ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
 def read_secret_file(path):
@@ -55,6 +89,15 @@ def is_admin_passphrase(supplied):
     if expected is None:
         return False
     return hmac.compare_digest((supplied or "").strip().encode(), expected.encode())
+
+# 部屋画像として選択可能なファイルの一覧。命名規則を正規表現で完全一致させることで、
+# 以降の処理はこの戻り値に含まれるかどうかだけで判定でき、パストラバーサルの余地がない
+def list_room_images():
+    try:
+        names = os.listdir(ROOM_IMAGE_DIR)
+    except OSError:
+        return []
+    return sorted(n for n in names if ROOM_IMAGE_PATTERN.fullmatch(n))
 
 # セキュリティモード(デフォルト: very_easy):
 #   none      … 認証なし(閲覧・書き込みとも自由)
@@ -128,6 +171,15 @@ def room_image():
     directory, filename = os.path.split(path)
     return send_from_directory(directory or ".", filename)
 
+# 選択パネル用のプレビュー配信。list_room_images()に含まれるファイル名以外は404にする。
+# 画像バイト自体は/room-image.pngと同様に非機密の装飾素材なので認証は課さない
+# (GETのURL/クエリに合言葉を乗せる設計はログ等に残るリスクがあり、既存のPOST body方式に反するため)
+@app.route("/room-image-preview/<name>")
+def room_image_preview(name):
+    if name not in list_room_images():
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(ROOM_IMAGE_DIR, name)
+
 @app.route("/chara-image.png")
 def chara_image():
     return send_from_directory("assets", "chara-image-1.png")
@@ -151,7 +203,7 @@ def get_status():
         discord = "error"
     else:
         discord = "on"
-    return jsonify({"discord": discord})
+    return jsonify({"discord": discord, "roomImageVersion": room_image_version})
 
 @app.route("/messages", methods=["GET"])
 def get_messages():
@@ -244,6 +296,32 @@ def kick_board():
     if entry:
         add_system_message(f"🚫 {entry['name']} が管理者によりルーム{entry['room']}から強制退室させられました")
     return jsonify({"ok": True})
+
+# 画像一覧取得: 管理者合言葉必須(kickと同型のゲート)。画像バイト自体はroom_image_previewで別途取得させる
+@app.route("/admin/room-images", methods=["POST"])
+def admin_room_images():
+    data = request.get_json()
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    current_path = load_settings().get("appearance", {}).get("room_image") or f"{ROOM_IMAGE_DIR}/room-image-1.png"
+    return jsonify({"images": list_room_images(), "current": os.path.basename(current_path)})
+
+# 画像変更の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
+@app.route("/admin/room-image", methods=["POST"])
+def admin_set_room_image():
+    global room_image_version
+    data = request.get_json()
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    filename = (data.get("file") or "").strip()
+    if filename not in list_room_images():
+        return jsonify({"error": "invalid file"}), 400
+    set_room_image_setting(filename)
+    room_image_version += 1
+    add_system_message(f"🖼️ 管理者が部屋画像を {filename} に変更しました")
+    return jsonify({"ok": True, "file": filename, "version": room_image_version})
 
 @app.route("/board/leave", methods=["POST"])
 def leave_board():

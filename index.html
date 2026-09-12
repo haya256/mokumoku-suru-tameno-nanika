@@ -30,6 +30,49 @@
       image-rendering: pixelated;
     }
 
+    #roomImageBtn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 2;
+      background: rgba(255,255,255,0.85);
+      border: 1px solid #999;
+      border-radius: 4px;
+      padding: 2px 10px;
+      font-size: 0.75rem;
+      cursor: pointer;
+    }
+
+    #roomImageBtn:hover { background: #fff; }
+
+    #roomImagePanel {
+      position: absolute;
+      top: 36px;
+      right: 8px;
+      z-index: 3;
+      background: #fff;
+      border: 1px solid #999;
+      border-radius: 6px;
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-width: calc(100% - 16px);
+    }
+
+    #roomImagePanel img {
+      width: 64px;
+      height: 64px;
+      object-fit: cover;
+      cursor: pointer;
+      border: 2px solid transparent;
+      border-radius: 4px;
+      image-rendering: pixelated;
+    }
+
+    #roomImagePanel img.selected { border-color: #3a3; }
+    #roomImagePanel img:hover { opacity: 0.85; }
+
     #roomOverlay {
       position: absolute;
       inset: 0;
@@ -495,11 +538,16 @@
     const copyBtn = document.getElementById("copyBtn");
     const closeRecordBtn = document.getElementById("closeRecordBtn");
     const discordStatusEl = document.getElementById("discordStatus");
+    const roomViewEl = document.getElementById("roomView");
 
     let editing = false;
     let lastEntries = [];
     // 合言葉欄に管理者合言葉を入れた場合にtrueになる(サーバー側が都度判定。ここはボタン表示のためだけのキャッシュ)
     let isAdmin = false;
+    let prevIsAdmin = false; // isAdminの変化点でだけボタンを付け外しする(毎ポーリングで作り直さない)
+    // 部屋画像のバージョン。nullは「まだ基準値を持っていない」状態(初回pollで基準値として記録するだけで再取得はしない)
+    let roomImageVersion = null;
+    let pendingImageVersion = null; // ジッター待ち中のバージョン(同じ変化に対して二重にsetTimeoutしない)
     nameEl.value = localStorage.getItem("mokumoku-name") || "";
     // 入室を待たず、名前欄の変更時点で即保存する
     nameEl.addEventListener("input", () => {
@@ -676,27 +724,54 @@
 
     function renderStatus(status) {
       const badge = DISCORD_BADGES[status.discord];
-      if (!badge) return;
-      discordStatusEl.textContent = badge.label;
-      discordStatusEl.title = badge.title;
-      discordStatusEl.className = status.discord;
+      if (badge) {
+        discordStatusEl.textContent = badge.label;
+        discordStatusEl.title = badge.title;
+        discordStatusEl.className = status.discord;
+      }
+      if (typeof status.roomImageVersion === "number") {
+        scheduleRoomImageRefresh(status.roomImageVersion);
+      }
+    }
+
+    // 部屋画像が変わったことをpoll(2秒間隔)で検知したら、全員が同時に1〜2MBの画像を
+    // 再取得してアクセスが集中しないよう、0〜8秒のランダムな待ち時間を挟んでから反映する
+    // (poll間隔とジッターの合計で、最悪でも10秒程度以内には全員に反映される想定)
+    function scheduleRoomImageRefresh(version) {
+      if (roomImageVersion === null) {
+        // 初回pollでは「今表示中の画像がこのバージョン」という基準値を記録するだけ(再取得はしない)
+        roomImageVersion = version;
+        return;
+      }
+      if (version === roomImageVersion || version === pendingImageVersion) return;
+      pendingImageVersion = version;
+      const delay = Math.random() * 8000;
+      setTimeout(() => {
+        roomImageVersion = version;
+        pendingImageVersion = null;
+        roomViewEl.querySelector("img").src = `/room-image.png?v=${version}`;
+      }, delay);
     }
 
     // 今保持している合言葉が管理者合言葉かどうかをサーバーに確認する(ボタン表示の判定用)
     async function checkAdmin() {
       const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
-      if (!passphrase) { isAdmin = false; return; }
-      try {
-        const res = await fetch("/admin/status", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ passphrase }),
-        });
-        const data = await res.json();
-        isAdmin = !!data.isAdmin;
-      } catch {
+      if (!passphrase) {
         isAdmin = false;
+      } else {
+        try {
+          const res = await fetch("/admin/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ passphrase }),
+          });
+          const data = await res.json();
+          isAdmin = !!data.isAdmin;
+        } catch {
+          isAdmin = false;
+        }
       }
+      syncRoomImageButton();
     }
 
     async function kickUser(id, name) {
@@ -714,6 +789,80 @@
         return;
       }
       await poll();
+    }
+
+    // isAdminがtrue→falseに変化した瞬間だけボタン(と開いていればパネル)を除去/追加する。
+    // renderBoardのkickボタンと違い、2秒ごとのpollで作り直すとパネルの開閉状態が消えてしまうため、
+    // 「変化があったときだけ」DOMを触る設計にする
+    function syncRoomImageButton() {
+      if (isAdmin === prevIsAdmin) return;
+      prevIsAdmin = isAdmin;
+      const existingBtn = document.getElementById("roomImageBtn");
+      if (isAdmin && !existingBtn) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.id = "roomImageBtn";
+        btn.textContent = "部屋画像を変更";
+        btn.addEventListener("click", toggleRoomImagePanel);
+        roomViewEl.appendChild(btn);
+      } else if (!isAdmin) {
+        existingBtn?.remove();
+        document.getElementById("roomImagePanel")?.remove();
+      }
+    }
+
+    async function toggleRoomImagePanel() {
+      const existingPanel = document.getElementById("roomImagePanel");
+      if (existingPanel) { existingPanel.remove(); return; }
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      let data;
+      try {
+        const res = await fetch("/admin/room-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase }),
+        });
+        if (!res.ok) { alert("画像一覧の取得に失敗しました"); return; }
+        data = await res.json();
+      } catch {
+        alert("画像一覧の取得に失敗しました");
+        return;
+      }
+      const panel = document.createElement("div");
+      panel.id = "roomImagePanel";
+      (data.images || []).forEach(name => {
+        const img = document.createElement("img");
+        img.src = `/room-image-preview/${encodeURIComponent(name)}`;
+        img.alt = name;
+        img.title = name;
+        if (name === data.current) img.classList.add("selected");
+        img.addEventListener("click", () => applyRoomImage(name));
+        panel.appendChild(img);
+      });
+      roomViewEl.appendChild(panel);
+    }
+
+    async function applyRoomImage(name) {
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      let data;
+      try {
+        const res = await fetch("/admin/room-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase, file: name }),
+        });
+        if (!res.ok) { alert("部屋画像の変更に失敗しました"); return; }
+        data = await res.json();
+      } catch {
+        alert("部屋画像の変更に失敗しました");
+        return;
+      }
+      document.getElementById("roomImagePanel")?.remove();
+      // 操作した本人はジッター待ちせず即時反映。以後のpollで同じバージョンを受け取っても
+      // scheduleRoomImageRefreshが「既に反映済み」と判定して再取得しないよう基準値も更新する
+      roomImageVersion = data.version;
+      pendingImageVersion = null;
+      roomViewEl.querySelector("img").src = `/room-image.png?v=${data.version}`;
     }
 
     async function poll() {
