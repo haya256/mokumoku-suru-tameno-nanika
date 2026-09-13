@@ -1343,7 +1343,7 @@
         row.className = "peer-row";
         const info = document.createElement("span");
         info.className = "peer-info";
-        info.textContent = p.type === "fork" ? `${p.name} (elm200 fork版)` : p.name;
+        info.textContent = p.type === "fork" ? `${p.name} (Redis版)` : p.name;
         info.title = p.url;
         const del = document.createElement("button");
         del.type = "button";
@@ -1362,7 +1362,7 @@
       // fork型はelm200版(FastAPI+Redis)向けの読み替えアダプタを使う。向こうのRedis消費を抑えるため
       // 巡回間隔も別扱いになる(config/settings.jsonのworld.fork_poll_interval_sec)
       const typeSelect = document.createElement("select");
-      typeSelect.innerHTML = `<option value="native">通常</option><option value="fork">elm200 fork版</option>`;
+      typeSelect.innerHTML = `<option value="native">通常</option><option value="fork">Redis版</option>`;
       const submit = () => changePeer({
         action: "add", url: urlInput.value.trim(), name: nameInput.value.trim(), type: typeSelect.value,
       });
