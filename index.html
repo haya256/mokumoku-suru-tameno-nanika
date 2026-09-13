@@ -236,7 +236,7 @@
       padding-top: 8px;
     }
 
-    #worldPanel .peer-add input { font-size: 0.8rem; }
+    #worldPanel .peer-add input, #worldPanel .peer-add select { font-size: 0.8rem; }
     #worldPanel .peer-add button { padding: 5px 10px; font-size: 0.8rem; }
 
     .room-overlay {
@@ -916,7 +916,8 @@
         tile.img.classList.add("missing");
         return;
       }
-      const src = `/peer-room-image/${encodeURIComponent(p.id)}.webp?v=${p.roomImageVersion || 0}`;
+      // 拡張子は付けない。native型(webp)/fork型(png)で形式が違うため、実体のmimeはサーバー側が返す
+      const src = `/peer-room-image/${encodeURIComponent(p.id)}?v=${encodeURIComponent(p.roomImageVersion || 0)}`;
       if (tile.img.getAttribute("src") !== src) tile.img.src = src;
     }
 
@@ -1342,7 +1343,7 @@
         row.className = "peer-row";
         const info = document.createElement("span");
         info.className = "peer-info";
-        info.textContent = p.name;
+        info.textContent = p.type === "fork" ? `${p.name} (elm200 fork版)` : p.name;
         info.title = p.url;
         const del = document.createElement("button");
         del.type = "button";
@@ -1358,7 +1359,13 @@
       const nameInput = document.createElement("input");
       nameInput.type = "text";
       nameInput.placeholder = "表示名 (任意)";
-      const submit = () => changePeer({ action: "add", url: urlInput.value.trim(), name: nameInput.value.trim() });
+      // fork型はelm200版(FastAPI+Redis)向けの読み替えアダプタを使う。向こうのRedis消費を抑えるため
+      // 巡回間隔も別扱いになる(config/settings.jsonのworld.fork_poll_interval_sec)
+      const typeSelect = document.createElement("select");
+      typeSelect.innerHTML = `<option value="native">通常</option><option value="fork">elm200 fork版</option>`;
+      const submit = () => changePeer({
+        action: "add", url: urlInput.value.trim(), name: nameInput.value.trim(), type: typeSelect.value,
+      });
       [urlInput, nameInput].forEach(el => el.addEventListener("keydown", e => {
         if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
       }));
@@ -1368,7 +1375,7 @@
       addBtn.addEventListener("click", submit);
       const add = document.createElement("div");
       add.className = "peer-add";
-      add.append(urlInput, nameInput, addBtn);
+      add.append(urlInput, nameInput, typeSelect, addBtn);
       panel.appendChild(add);
       roomViewEl.appendChild(panel);
     }

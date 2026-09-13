@@ -49,16 +49,26 @@ _settings_write_lock = threading.Lock()
 # ブラウザから相手サーバーを直接叩かせないことで、CORS設定が不要になり、参加者が何人いても
 # 相手への負荷が一定になり、参加者のIPが相手に渡らない
 MAX_PEERS = 8            # 中央(自分)を除いた3×3マップの周囲8マス
-PEER_POLL_INTERVAL = 5   # ピアを巡回する間隔(秒)。クライアントの2秒pollとは独立
+PEER_POLL_INTERVAL = 5   # ネイティブ型ピアを巡回する間隔(秒)。クライアントの2秒pollとは独立
 PEER_TIMEOUT = 5
 PEER_JSON_MAX = 1_000_000
-PEER_IMAGE_MAX = 2_000_000
+
+# 実機のelm200 fork版で確認した部屋画像は1024x1024のPNGで約2.3MBあった(nativeのwebpより大きい)。
+# それを弾かない程度の余裕を持たせつつ、無制限にはしない
+PEER_IMAGE_MAX = 6_000_000
 PEER_IMAGE_MAX_AGE = 300 # 部屋画像を取り直すまでの最長時間(秒)
 WEBP_MAGIC_HEAD = b"RIFF"
 WEBP_MAGIC_TAIL = b"WEBP"
-peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int, "ok": bool}
-peer_images = {}        # peer_id -> {"data": bytes, "version": int|None, "at": float}
+# fork型ピア(FastAPI+Redisバックエンド、GET /api/events のSSEでスナップショット配信)のデフォルト巡回間隔。
+# アクセス1回ごとに相手のRedisコマンドを複数消費するため、インメモリのネイティブ型より長めに取る。
+# もくもく会は24時間稼働ではなく限られた時間だけ動かす運用が前提のため、1分程度なら実用上許容範囲。
+# config/settings.json の world.fork_poll_interval_sec で管理者が調整できる(再起動不要)
+FORK_POLL_INTERVAL_DEFAULT = 60
+FORK_SSE_MAX = 2_000_000  # SSEの最初の1イベントを読む際の上限バイト数(以降は読まず切断する)
+peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
+peer_images = {}        # peer_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str}
+peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(fork型のみ使う)
 
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
 def load_settings():
@@ -130,6 +140,8 @@ def list_room_images():
         return []
     return sorted(n for n in names if ROOM_IMAGE_PATTERN.fullmatch(n))
 
+PEER_TYPES = ("native", "fork")  # native: このリポジトリ系統(Flask+ポーリング) / fork: elm200版(FastAPI+Redis+SSE)
+
 # ピア一覧は毎回settings.jsonから読み直す。巡回スレッドもこれを使うので、管理者はサーバー稼働中に
 # 接続・解除でき再起動が要らない(合言葉や部屋画像が再起動不要なのと同じ流儀)
 def load_peers():
@@ -138,6 +150,15 @@ def load_peers():
 
 def find_peer(peer_id):
     return next((p for p in load_peers() if p.get("id") == peer_id), None)
+
+# fork型ピアの巡回間隔(秒)。settings.jsonのworld.fork_poll_interval_secで管理者が調整できる
+# (再起動不要)。ネイティブ型より短くして相手に負担をかけないよう、下限をPEER_POLL_INTERVALに丸める
+def fork_poll_interval():
+    try:
+        val = int(load_settings().get("world", {}).get("fork_poll_interval_sec", FORK_POLL_INTERVAL_DEFAULT))
+    except (TypeError, ValueError):
+        val = FORK_POLL_INTERVAL_DEFAULT
+    return max(val, PEER_POLL_INTERVAL)
 
 # 受け付けるのはホストまでのURLだけ。パス付きは中継先URLの組み立てが壊れるので弾く。
 # schemeを絞るのは、取得した中身を参加者に中継する以上file:などを踏ませないため
@@ -150,7 +171,9 @@ def normalize_peer_url(url):
         return None
     return url
 
-def add_peer(url, name):
+def add_peer(url, name, peer_type):
+    if peer_type not in PEER_TYPES:
+        peer_type = "native"
     def mutate(settings):
         world = settings.setdefault("world", {})
         peers = [p for p in world.get("peers", []) if isinstance(p, dict)]
@@ -161,7 +184,7 @@ def add_peer(url, name):
             return {"error": "full"}
         # 空いているマスからランダムに選んで以降固定。設定に保存するので再起動しても動かない
         used = {p.get("slot") for p in peers}
-        peer = {"id": secrets.token_hex(4), "url": url, "name": name,
+        peer = {"id": secrets.token_hex(4), "url": url, "name": name, "type": peer_type,
                 "slot": random.choice([s for s in range(MAX_PEERS) if s not in used])}
         peers.append(peer)
         return {"peer": peer}
@@ -187,40 +210,77 @@ def fetch_peer_bytes(url, limit):
 def fetch_peer_json(url):
     return _json.loads(fetch_peer_bytes(url, PEER_JSON_MAX).decode("utf-8"))
 
+# fork型ピア(elm200版)向け。GET /api/events はSSEで、接続直後に現在の全状態を
+# `data: {...}\n\n` で1回配信してから待機ループに入る仕様(2026-09-13時点で確認)。
+# こちらは待機ループには付き合わず、最初の1イベントだけ読んで即座に接続を閉じる
+def fetch_fork_snapshot(url):
+    req = urllib.request.Request(f"{url}/api/events", headers={"User-Agent": "mokumoku-bot/1.0"})
+    with urllib.request.urlopen(req, timeout=PEER_TIMEOUT) as res:
+        total = 0
+        for _ in range(200):  # pingコメント行等を読み飛ばしても無限ループにならないよう上限を設ける
+            line = res.readline(2048)
+            total += len(line)
+            if total > FORK_SSE_MAX:
+                raise ValueError("sse event too large")
+            if not line:
+                raise ValueError("connection closed before snapshot")
+            if line.startswith(b"data:"):
+                return _json.loads(line[len(b"data:"):].strip().decode("utf-8"))
+    raise ValueError("no snapshot event received")
+
 # 失敗してもboard/messagesは前回値を残してok=Falseにするだけ。一瞬の通信断で
 # 相手の部屋から人が消えたように見えるのを避ける(クライアント側はグレーアウト表示にする)
 def refresh_peer(peer):
-    pid, url = peer["id"], peer["url"]
+    pid, url, peer_type = peer["id"], peer["url"], peer.get("type", "native")
     try:
-        board = fetch_peer_json(f"{url}/board")
-        msgs = fetch_peer_json(f"{url}/messages")
-        status = fetch_peer_json(f"{url}/status")
-        if not isinstance(board, list) or not isinstance(msgs, list) or not isinstance(status, dict):
-            raise ValueError("unexpected payload")
-        version = status.get("roomImageVersion")
+        if peer_type == "fork":
+            snapshot = fetch_fork_snapshot(url)
+            board, msgs, config = snapshot.get("board"), snapshot.get("messages"), snapshot.get("config")
+            if not isinstance(board, list) or not isinstance(msgs, list) or not isinstance(config, dict):
+                raise ValueError("unexpected payload")
+            # forkにはネイティブ版のような整数バージョン番号が無いため、部屋画像のファイル名自体を
+            # 変化検知用のバージョン代わりに使う(ファイル名が変われば更新とみなす)
+            version = config.get("roomImage")
+        else:
+            board = fetch_peer_json(f"{url}/board")
+            msgs = fetch_peer_json(f"{url}/messages")
+            status = fetch_peer_json(f"{url}/status")
+            if not isinstance(board, list) or not isinstance(msgs, list) or not isinstance(status, dict):
+                raise ValueError("unexpected payload")
+            version = status.get("roomImageVersion")
         peer_cache[pid] = {"board": board, "messages": msgs,
-                           "roomImageVersion": version if isinstance(version, int) else 0, "ok": True}
+                           "roomImageVersion": version if isinstance(version, (int, str)) else 0, "ok": True}
     except Exception as e:
         peer_cache[pid] = {**peer_cache.get(pid, {}), "ok": False}
         print(f"[peers] {peer.get('name') or url}: {e}")
         return
     # 画像の取得失敗でピア全体をオフライン扱いにはしない(在室者やチャットは取れているため)
     try:
-        refresh_peer_image(pid, url, version)
+        refresh_peer_image(pid, url, peer_type, version)
     except Exception as e:
         print(f"[peers] {peer.get('name') or url} の部屋画像: {e}")
 
-# 部屋画像は相手のバージョンが変わったときだけ取り直す(毎回取ると数百KBが5秒おきに流れる)。
-# ただし相手が再起動するとバージョンは0に戻るので、それだけに頼らず一定時間で取り直す
-def refresh_peer_image(pid, url, version):
+# 部屋画像は相手のバージョンが変わったときだけ取り直す(毎回取ると数百KBが巡回のたびに流れる)。
+# ただし相手が再起動するとバージョンは0に戻りうるので、それだけに頼らず一定時間で取り直す
+def refresh_peer_image(pid, url, peer_type, version):
     cached = peer_images.get(pid)
     if cached and cached["version"] == version and time.time() - cached["at"] < PEER_IMAGE_MAX_AGE:
         return
-    data = fetch_peer_bytes(f"{url}/room-image.webp", PEER_IMAGE_MAX)
-    # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
-    if data[:4] != WEBP_MAGIC_HEAD or data[8:12] != WEBP_MAGIC_TAIL:
-        raise ValueError("not a webp image")
-    peer_images[pid] = {"data": data, "version": version, "at": time.time()}
+    if peer_type == "fork":
+        # forkは部屋画像を public/assets/ 配下から静的配信している(PNG)。versionはそのファイル名
+        if not version or not re.fullmatch(r"[\w.-]+", version):
+            raise ValueError("invalid room image filename")
+        data = fetch_peer_bytes(f"{url}/assets/{version}", PEER_IMAGE_MAX)
+        if not data.startswith(PNG_MAGIC):
+            raise ValueError("not a png image")
+        mime = "image/png"
+    else:
+        data = fetch_peer_bytes(f"{url}/room-image.webp", PEER_IMAGE_MAX)
+        # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
+        if data[:4] != WEBP_MAGIC_HEAD or data[8:12] != WEBP_MAGIC_TAIL:
+            raise ValueError("not a webp image")
+        mime = "image/webp"
+    peer_images[pid] = {"data": data, "mime": mime, "version": version, "at": time.time()}
 
 def poll_peers_once():
     peers = load_peers()
@@ -230,9 +290,22 @@ def poll_peers_once():
     for pid in [p for p in peer_cache if p not in ids]:
         peer_cache.pop(pid, None)
         peer_images.pop(pid, None)
+        peer_last_polled.pop(pid, None)
     for key in [k for k in peer_chara_images if k[0] not in ids]:
         peer_chara_images.pop(key, None)
-    targets = [p for p in peers if p.get("id") and p.get("url")]
+    # fork型ピアはRedisバックエンドでアクセス1回のコストが高いため、ネイティブ型と同じ5秒間隔では
+    # 巡回しない。設定された間隔が経過したものだけを対象に加える
+    interval = fork_poll_interval()
+    now = time.time()
+    targets = []
+    for p in peers:
+        if not (p.get("id") and p.get("url")):
+            continue
+        if p.get("type") == "fork":
+            if now - peer_last_polled.get(p["id"], 0) < interval:
+                continue
+            peer_last_polled[p["id"]] = now
+        targets.append(p)
     if targets:
         # 応答しないピアが他のピアの鮮度を巻き添えにしないよう並列に取りに行く
         with ThreadPoolExecutor(max_workers=MAX_PEERS) as pool:
@@ -345,13 +418,14 @@ def chara_custom(cid):
                              "Cache-Control": "public, max-age=86400"})
 
 # ピアの部屋画像を中継。実体は巡回スレッドが取得済みのバイト列なので、ここでは相手サーバーに触れない。
+# native型はwebp、fork型はpngと形式が違うため、拡張子は付けずキャッシュ済みのmimeをそのまま返す。
 # /room-image-preview と同じくGETに合言葉は載せない方針
-@app.route("/peer-room-image/<peer_id>.webp")
+@app.route("/peer-room-image/<peer_id>")
 def peer_room_image(peer_id):
     img = peer_images.get(peer_id)
     if not img or not find_peer(peer_id):
         return jsonify({"error": "not found"}), 404
-    return Response(img["data"], mimetype="image/webp",
+    return Response(img["data"], mimetype=img.get("mime", "image/webp"),
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
@@ -365,9 +439,11 @@ def peer_chara(peer_id, cid):
     version = request.args.get("v", "")
     cached = peer_chara_images.get((peer_id, cid))
     if not cached or cached["version"] != version:
+        quoted_cid = urllib.parse.quote(cid, safe="")
+        chara_url = (f"{peer['url']}/api/chara-custom?id={quoted_cid}" if peer.get("type") == "fork"
+                     else f"{peer['url']}/chara-custom/{quoted_cid}.png")
         try:
-            data = fetch_peer_bytes(
-                f"{peer['url']}/chara-custom/{urllib.parse.quote(cid, safe='')}.png", PEER_IMAGE_MAX)
+            data = fetch_peer_bytes(chara_url, PEER_IMAGE_MAX)
         except Exception:
             return jsonify({"error": "unavailable"}), 502
         # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
@@ -537,7 +613,8 @@ def admin_peers():
     supplied = ((data or {}).get("passphrase") or "").strip()
     if not is_admin_passphrase(supplied):
         return jsonify({"error": "admin required"}), 403
-    peers = [{"id": p.get("id"), "url": p.get("url"), "name": p.get("name")} for p in load_peers()]
+    peers = [{"id": p.get("id"), "url": p.get("url"), "name": p.get("name"),
+              "type": p.get("type", "native")} for p in load_peers()]
     return jsonify({"peers": peers, "max": MAX_PEERS})
 
 # 接続・解除の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
@@ -554,7 +631,8 @@ def admin_peer():
             return jsonify({"error": "invalid url"}), 400
         # 名前はシステムメッセージとDiscordにも載るので、改行を潰して長さを切る
         name = " ".join((data.get("name") or "").split())[:40] or urllib.parse.urlparse(url).netloc
-        result = add_peer(url, name)
+        peer_type = data.get("type") if data.get("type") in PEER_TYPES else "native"
+        result = add_peer(url, name, peer_type)
         if result.get("error") == "duplicate":
             return jsonify({"error": "already connected"}), 400
         if result.get("error") == "full":
