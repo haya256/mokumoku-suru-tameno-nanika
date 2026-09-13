@@ -477,6 +477,25 @@
       white-space: pre-wrap;
     }
 
+    .msg .text a { color: #2a5db0; word-break: break-all; }
+    .msg .text a:hover { text-decoration: none; }
+
+    .yt-embed {
+      position: relative;
+      width: 100%;
+      max-width: 360px;
+      aspect-ratio: 16 / 9;
+      margin-top: 6px;
+    }
+    .yt-embed iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      border-radius: 6px;
+    }
+
     .msg.system {
       background: none;
       border-radius: 0;
@@ -809,7 +828,12 @@
           div.innerHTML = `<span class="stamp">${esc(m.time)}</span>${from}${esc(m.text)}`;
         } else {
           div.className = `msg${remote}`;
-          div.innerHTML = `<div class="meta">${from}<span>${esc(m.name)}</span> ${esc(m.time)}</div><div class="text">${esc(m.text)}</div>`;
+          div.innerHTML = `<div class="meta">${from}<span>${esc(m.name)}</span> ${esc(m.time)}</div>`;
+          const textEl = document.createElement("div");
+          textEl.className = "text";
+          const videoId = appendLinkedText(textEl, m.text);
+          div.appendChild(textEl);
+          if (videoId) div.appendChild(buildYouTubeEmbed(videoId));
         }
         messagesEl.appendChild(div);
       });
@@ -1020,6 +1044,64 @@
     // 相手ルームから中継されてきた文字列も必ずここを通す。型が文字列とは限らないので String() で受ける
     function esc(s) {
       return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    // 本文中のURLをテキストノードと<a>要素に分けてelに追加する。innerHTML文字列に組み込むのではなく
+    // DOM要素として組み立てるので、esc()を通さなくてもXSSの心配がない。
+    // 戻り値: 本文中で最初に見つかったYouTube動画ID(埋め込み用)。無ければnull
+    function appendLinkedText(el, text) {
+      // 日本語の文中にスペース無しで続く場合に備え、CJK文字・全角記号・閉じ括弧はURLに含めない
+      // (生のURLにこれらの文字が現れることは実質無いため、境界として扱って安全)
+      const URL_RE = /https?:\/\/[^\s)\]}\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]+/g;
+      let lastIndex = 0, match, videoId = null;
+      while ((match = URL_RE.exec(text))) {
+        if (match.index > lastIndex) el.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        // 文末の句読点・閉じ括弧はURLに含めない(「〜です(https://...)。」のような文脈への対応)
+        let url = match[0];
+        const trail = url.match(/[)\]}.,!?、。」』]+$/);
+        if (trail) url = url.slice(0, -trail[0].length);
+        const a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = url;
+        el.appendChild(a);
+        if (trail) el.appendChild(document.createTextNode(trail[0]));
+        if (!videoId) videoId = extractYouTubeId(url);
+        lastIndex = match.index + match[0].length;
+      }
+      if (lastIndex < text.length) el.appendChild(document.createTextNode(text.slice(lastIndex)));
+      return videoId;
+    }
+
+    // YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/)から11文字の動画IDを取り出す。
+    // 該当しなければnull(埋め込みなし、リンクだけになる)
+    function extractYouTubeId(url) {
+      let u;
+      try { u = new URL(url); } catch { return null; }
+      const host = u.hostname.replace(/^(www\.|m\.)/, "");
+      const idOk = id => /^[\w-]{11}$/.test(id) ? id : null;
+      if (host === "youtu.be") return idOk(u.pathname.slice(1));
+      if (host === "youtube.com" || host === "youtube-nocookie.com") {
+        if (u.pathname === "/watch") return idOk(u.searchParams.get("v") || "");
+        const m = u.pathname.match(/^\/(?:shorts|embed)\/([\w-]{11})/);
+        if (m) return idOk(m[1]);
+      }
+      return null;
+    }
+
+    // youtube-nocookie.comを使うのは、埋め込み再生に伴うトラッキング/Cookieを減らすため
+    function buildYouTubeEmbed(id) {
+      const wrap = document.createElement("div");
+      wrap.className = "yt-embed";
+      const iframe = document.createElement("iframe");
+      iframe.src = `https://www.youtube-nocookie.com/embed/${id}`;
+      iframe.loading = "lazy";
+      iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      wrap.appendChild(iframe);
+      return wrap;
     }
 
     function nowHHMM() {
