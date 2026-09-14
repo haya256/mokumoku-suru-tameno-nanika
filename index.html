@@ -92,6 +92,113 @@
     .tile > img.missing { visibility: hidden; }
     .tile.offline > img { filter: grayscale(1); opacity: 0.35; }
 
+    /* YouTubeエリア。サムネは16:9なので正方形のマスに素直に入れると縦に伸びる。
+       containで上下中央に収めると、再生後のプレイヤー(同じく16:9)とぴったり同じ帯に乗る。
+       ドット絵用のpixelatedも実写には効かせない */
+    .tile.youtube {
+      background: #111;
+    }
+
+    .tile.youtube > img {
+      object-fit: contain;
+      image-rendering: auto;
+      opacity: 0.85;
+    }
+
+    /* 9部屋のグリッドはinset:0の透明レイヤーなので、残しているとプレイヤーの操作を奪う */
+    .tile.youtube > .room-overlay { display: none; }
+    /* 再生中はマス名がYouTubeのコントロールバーと重なる */
+    .tile.youtube.playing > .tile-label { display: none; }
+
+    /* 正方形のマスに16:9を上下中央で収める。マス全体に広げるとYouTube側が黒帯を作り、
+       コントロールバーが映像から離れて間延びして見える */
+    .tile-player {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      transform: translateY(-50%);
+      z-index: 2;
+    }
+
+    .tile-player[hidden] { display: none; }
+    .tile-player iframe { display: block; width: 100%; height: 100%; border: 0; }
+
+    .tile-play {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: 0;
+      color: #fff;
+      font-size: clamp(1.4rem, 4vw, 3rem);
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+      cursor: pointer;
+    }
+
+    .tile-play:hover { color: #f55; }
+
+    .tile-zoom {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      z-index: 3;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      border: 0;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.75rem;
+      line-height: 1.4;
+      cursor: pointer;
+    }
+
+    .tile-zoom:hover { background: rgba(0, 0, 0, 0.8); }
+
+    /* display を指定した要素は hidden 属性が効かなくなる(.tile-status と同じ罠) */
+    .tile-play[hidden], .tile-zoom[hidden] { display: none; }
+
+    #nowPlayingBar {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      max-width: calc(100% - 16px);
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 0.75rem;
+    }
+
+    #nowPlayingBar[hidden] { display: none; }
+
+    #nowPlayingLabel {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #nowPlayingBar button {
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.85);
+      color: #333;
+      border: 0;
+      border-radius: 3px;
+      padding: 2px 6px;
+      font-size: 0.7rem;
+      cursor: pointer;
+    }
+
+    #nowPlayingBar button:hover { background: #fff; }
+
     /* 上端は「← マップへ」と管理者ボタンが占めるので、ルーム名は下端に置く
        (キャラは下端から14%の位置に立つので重ならない) */
     .tile-label {
@@ -203,8 +310,24 @@
     #worldPanel .peer-row {
       display: flex;
       align-items: center;
+      flex-wrap: wrap;
       gap: 6px;
     }
+
+    /* YouTubeルームの動画差し替え欄。名前と「片付ける」の下に丸ごと折り返す */
+    #worldPanel .peer-swap {
+      flex-basis: 100%;
+      display: flex;
+      gap: 6px;
+    }
+
+    #worldPanel .peer-swap input {
+      flex: 1;
+      min-width: 0;
+      font-size: 0.8rem;
+    }
+
+    #worldPanel .peer-swap button { flex-shrink: 0; font-size: 0.75rem; }
 
     #worldPanel .peer-info {
       flex: 1;
@@ -679,6 +802,12 @@
   <div id="roomView">
     <div id="worldMap"></div>
     <button type="button" id="backToMapBtn" hidden>← マップへ</button>
+    <!-- 再生中のマスは拡大表示のあいだ隠れる(音は鳴り続ける)ので、止める手綱をここに常設する -->
+    <div id="nowPlayingBar" hidden>
+      <span id="nowPlayingLabel"></span>
+      <button type="button" id="nowPlayingGoBtn">そのマスへ</button>
+      <button type="button" id="nowPlayingStopBtn" title="停止">⏹</button>
+    </div>
   </div>
   <div id="main">
   <header>もくもく会 <span id="discordStatus"></span></header>
@@ -750,12 +879,19 @@
     const roomViewEl = document.getElementById("roomView");
     const worldMapEl = document.getElementById("worldMap");
     const backToMapBtn = document.getElementById("backToMapBtn");
+    const nowPlayingBar = document.getElementById("nowPlayingBar");
+    const nowPlayingLabel = document.getElementById("nowPlayingLabel");
+    const nowPlayingGoBtn = document.getElementById("nowPlayingGoBtn");
+    const nowPlayingStopBtn = document.getElementById("nowPlayingStopBtn");
 
     let editing = false;
     let lastEntries = [];
-    // つながった相手ルームの最新状態(/world の戻り値)。0件なら従来どおり自分のルームの全画面表示
-    let peers = [];
-    // 拡大表示中のマス。null=ワールドマップ表示 / "self"=自分のルーム / それ以外はピアのid
+    // マップに置かれたエリアの最新状態(/world の戻り値)。0件なら従来どおり自分のルームの全画面表示。
+    // kind="peer" はつながった相手ルーム、kind="youtube" は管理者が置いた動画のマス
+    let areas = [];
+    // 在室者一覧とチャットのマージに使うのは相手ルームだけ(ガジェットには参加者もチャットも無い)
+    const peerAreas = () => areas.filter(a => a.kind === "peer");
+    // 拡大表示中のマス。null=ワールドマップ表示 / "self"=自分のルーム / それ以外はエリアのid
     let focusedKey = null;
     let localMessages = [];
     let selfRoomImageSrc = "/room-image.webp";
@@ -804,9 +940,32 @@
       const status = document.createElement("span");
       status.className = "tile-status";
       status.hidden = true;
-      el.append(img, overlay, label, status);
+      // YouTubeエリア用。普段は隠しておき、そのマスがYouTubeになったときだけ出す。
+      // playerは空のまま置いておき、▶が押された時点で初めてiframeを差し込む
+      // (置いただけでiframeを作ると、マップを開いただけでYouTubeとの通信と再生が始まってしまう)
+      const player = document.createElement("div");
+      player.className = "tile-player";
+      player.hidden = true;
+      const playBtn = document.createElement("button");
+      playBtn.type = "button";
+      playBtn.className = "tile-play";
+      playBtn.textContent = "▶";
+      playBtn.title = "再生";
+      playBtn.hidden = true;
+      // 再生中はiframeがマスを覆ってクリックが親に届かなくなるので、拡大の入口を別に常設する
+      const zoomBtn = document.createElement("button");
+      zoomBtn.type = "button";
+      zoomBtn.className = "tile-zoom";
+      zoomBtn.hidden = true;
+      el.append(img, overlay, label, status, player, playBtn, zoomBtn);
       worldMapEl.appendChild(el);
-      tiles.push({ el, img, overlay, label, status, cells: [...overlay.children], key: null, lastState: "" });
+      const tile = { el, img, overlay, label, status, player, playBtn, zoomBtn,
+                     cells: [...overlay.children], key: null, lastState: "", playing: false };
+      // 再生状態はtile側に持つ。classListに持たせると、2秒ごとのrenderWorld()が
+      // className を丸ごと書き換えるタイミングで消えてしまう
+      playBtn.addEventListener("click", e => { e.stopPropagation(); startTilePlayback(tile); });
+      zoomBtn.addEventListener("click", e => { e.stopPropagation(); toggleTileFocus(tile); });
+      tiles.push(tile);
     }
 
     let lastMsgSig = "";
@@ -885,20 +1044,20 @@
       return o => `/peer-chara/${encodeURIComponent(peerId)}/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
     }
 
-    // ピアをマスに割り当てる。slotが重複・欠損していても(設定を手で編集した場合など)
+    // エリアをマスに割り当てる。slotが重複・欠損していても(設定を手で編集した場合など)
     // 空いているマスに寄せて必ずどこかに出す
     function assignTiles() {
       const assigned = new Array(9).fill(null);
       assigned[SELF_INDEX] = { self: true };
       const overflow = [];
-      peers.forEach(p => {
-        const idx = SLOT_TO_INDEX[p.slot];
-        if (idx !== undefined && !assigned[idx]) assigned[idx] = { peer: p };
-        else overflow.push(p);
+      areas.forEach(a => {
+        const idx = SLOT_TO_INDEX[a.slot];
+        if (idx !== undefined && !assigned[idx]) assigned[idx] = { area: a };
+        else overflow.push(a);
       });
-      overflow.forEach(p => {
-        const idx = assigned.findIndex(a => !a);
-        if (idx >= 0) assigned[idx] = { peer: p };
+      overflow.forEach(a => {
+        const idx = assigned.findIndex(x => !x);
+        if (idx >= 0) assigned[idx] = { area: a };
       });
       return assigned;
     }
@@ -907,55 +1066,134 @@
       if (el.className !== cls) el.className = cls;
     }
 
-    // サーバーが相手の部屋画像をまだ中継できない間はsrcを付けない。
+    // サーバーがマス絵をまだ中継できない間はsrcを付けない。
     // ここで404を踏ませると、あとで取得できてもURLが変わらず再読み込みが走らないため、
-    // 画像が出ないまま(キャラだけが浮いた状態)になってしまう
-    function setPeerTileImage(tile, p) {
-      if (!p.hasImage) {
+    // 画像が出ないまま(キャラだけが浮いた状態)になってしまう。
+    // verは変化検知用で、ピアなら相手の部屋画像バージョン、YouTubeなら動画IDを渡す
+    function setTileImage(tile, area, ver) {
+      if (!area.hasImage) {
         if (tile.img.getAttribute("src")) tile.img.removeAttribute("src");
         tile.img.classList.add("missing");
         return;
       }
-      // 拡張子は付けない。native型(webp)/fork型(png)で形式が違うため、実体のmimeはサーバー側が返す
-      const src = `/peer-room-image/${encodeURIComponent(p.id)}?v=${encodeURIComponent(p.roomImageVersion || 0)}`;
+      // 拡張子は付けない。webp(native)/png(fork)/jpeg(youtube)と形式が違うので、mimeはサーバーが返す
+      const src = `/area-image/${encodeURIComponent(area.id)}?v=${encodeURIComponent(ver || 0)}`;
       if (tile.img.getAttribute("src") !== src) tile.img.src = src;
     }
 
     const PEER_STATUS = { false: "接続できません", null: "接続中…", undefined: "接続中…" };
 
+    // マスを別のエリアに明け渡す前の後始末。再生中のiframeは隠すだけでは音が止まらないので破棄する
+    // (.tile.empty のCSSはimg/overlay/label/statusしか隠さない)
+    function resetTile(tile) {
+      tile.key = null;
+      tile.lastState = "";
+      tile.status.hidden = true;
+      stopTilePlayback(tile);
+    }
+
     function renderWorld() {
-      // ピアが1つも無いときはマップにせず、今までどおり自分のルームを全画面で出す
-      const focus = peers.length === 0 ? "self" : focusedKey;
+      // エリアが1つも無いときはマップにせず、今までどおり自分のルームを全画面で出す
+      const focus = areas.length === 0 ? "self" : focusedKey;
       worldMapEl.classList.toggle("focus-mode", focus !== null);
       assignTiles().forEach((slot, i) => {
         const tile = tiles[i];
         if (!slot) {
-          // 接続を解除した直後は「接続できません」が残っているので消しておく
-          if (tile.key !== null) { tile.key = null; tile.lastState = ""; tile.status.hidden = true; }
+          // 解除した直後は「接続できません」や再生中のプレイヤーが残っているので片付ける
+          if (tile.key !== null) resetTile(tile);
           setClass(tile.el, "tile empty");
           return;
         }
-        const key = slot.self ? "self" : slot.peer.id;
-        if (tile.key !== key) { tile.key = key; tile.lastState = ""; }
+        const key = slot.self ? "self" : slot.area.id;
+        // 同じマスが別のエリアに変わったときも、前のエリアの残骸を持ち越さない
+        if (tile.key !== key) { resetTile(tile); tile.key = key; }
         const focused = focus === key ? " focused" : "";
         if (slot.self) {
           if (tile.img.getAttribute("src") !== selfRoomImageSrc) tile.img.src = selfRoomImageSrc;
           setClass(tile.el, `tile self${focused}`);
           tile.label.textContent = "このルーム";
           tile.status.hidden = true;
+          tile.playBtn.hidden = tile.zoomBtn.hidden = true;
           renderRoomInto(tile, lastEntries, selfCharaUrl);
+        } else if (slot.area.kind === "youtube") {
+          renderYouTubeTile(tile, slot.area, focused);
+        } else if (slot.area.kind === "peer") {
+          renderPeerTile(tile, slot.area, focused);
         } else {
-          const p = slot.peer;
-          setPeerTileImage(tile, p);
-          setClass(tile.el, `tile peer${p.ok === false ? " offline" : ""}${focused}`);
-          tile.label.textContent = p.ok === true ? `${p.name} (${(p.board || []).length}人)` : p.name;
-          tile.status.hidden = p.ok === true;
-          tile.status.textContent = PEER_STATUS[p.ok] || "";
-          renderRoomInto(tile, p.board, peerCharaUrl(p.id));
+          // 知らない種別(設定を手で編集した場合など)。霧のマスにして何も壊さない
+          resetTile(tile);
+          setClass(tile.el, "tile empty");
         }
       });
+      renderNowPlaying();
       roomViewEl.classList.toggle("showing-self", focus === "self");
-      backToMapBtn.hidden = !(peers.length > 0 && focusedKey !== null);
+      backToMapBtn.hidden = !(areas.length > 0 && focusedKey !== null);
+    }
+
+    // つながった相手のもくもくルーム。中身は自分のルームと同じ9部屋なので renderRoomInto を使い回す
+    function renderPeerTile(tile, area, focused) {
+      setTileImage(tile, area, area.roomImageVersion);
+      setClass(tile.el, `tile peer${area.ok === false ? " offline" : ""}${focused}`);
+      tile.label.textContent = area.ok === true ? `${area.name} (${(area.board || []).length}人)` : area.name;
+      tile.status.hidden = area.ok === true;
+      tile.status.textContent = PEER_STATUS[area.ok] || "";
+      tile.playBtn.hidden = tile.zoomBtn.hidden = true;
+      renderRoomInto(tile, area.board, peerCharaUrl(area.id));
+    }
+
+    // 管理者が置いた動画1本のマス。再生前はサムネと▶だけで、iframeはまだ存在しない
+    function renderYouTubeTile(tile, area, focused) {
+      setTileImage(tile, area, area.videoId);
+      setClass(tile.el, `tile youtube${tile.playing ? " playing" : ""}${focused}`);
+      tile.label.textContent = area.name;
+      tile.status.hidden = true;
+      tile.playBtn.hidden = tile.playing;
+      tile.zoomBtn.hidden = false;
+      tile.zoomBtn.textContent = focused ? "⤡" : "⤢";
+      tile.zoomBtn.title = focused ? "マップに戻る" : "大きく見る";
+      tile.videoId = area.videoId;
+      tile.areaName = area.name;
+    }
+
+    // 再生中のエリアは同時に1つだけにする。複数が同時に鳴ると音が混ざるうえ、
+    // 拡大表示中は他のマスが隠れるので、どれを止めればいいのか分からなくなる
+    function startTilePlayback(tile) {
+      if (!tile.videoId) return;
+      tiles.forEach(t => { if (t !== tile) stopTilePlayback(t); });
+      tile.playing = true;
+      tile.player.hidden = false;
+      tile.player.replaceChildren(buildYouTubeEmbed(tile.videoId, { autoplay: true }));
+      // 狭い画面ではマスが130px前後しかなく、YouTubeのコントロールがほぼ隠れてしまうので
+      // 再生と同時に拡大する
+      if (window.matchMedia("(max-width: 800px)").matches && focusedKey !== tile.key) {
+        focusedKey = tile.key;
+      }
+      renderWorld();
+    }
+
+    // iframeは隠すだけでは音が止まらないので必ず取り除く。DOMから外して作り直す前提なので、
+    // 逆に「再生したまま別の場所へ移す」ことはできない(移すとリロードされて頭から再生になる)
+    function stopTilePlayback(tile) {
+      if (!tile.playing) return;
+      tile.playing = false;
+      tile.player.hidden = true;
+      tile.player.replaceChildren();
+    }
+
+    function toggleTileFocus(tile) {
+      focusedKey = focusedKey === tile.key ? null : tile.key;
+      renderWorld();
+    }
+
+    // 拡大表示中は再生中のマスがCSSで隠れる(音は鳴り続ける)ので、どこを見ていても
+    // 止められる手綱をマップ上に常設する
+    function renderNowPlaying() {
+      const playing = tiles.find(t => t.playing);
+      nowPlayingBar.hidden = !playing;
+      if (!playing) return;
+      nowPlayingLabel.textContent = `▶ ${playing.areaName || "YouTube"}`;
+      nowPlayingGoBtn.hidden = focusedKey === playing.key;
+      nowPlayingBar.dataset.key = playing.key;
     }
 
     function renderBoard(entries) {
@@ -965,7 +1203,7 @@
       // 自分のルームの行に、つながった相手ルームの行を続ける
       const rows = [
         ...entries.map(e => ({ e, room: `Room ${e.room}`, local: true })),
-        ...peers.flatMap(p => (p.board || []).map(e => ({ e, room: `${p.name} #${e.room}`, local: false }))),
+        ...peerAreas().flatMap(p => (p.board || []).map(e => ({ e, room: `${p.name} #${e.room}`, local: false }))),
       ];
       if (rows.length === 0) {
         entriesEl.innerHTML = `<div class="empty">まだ誰ももくもくしていません</div>`;
@@ -993,7 +1231,7 @@
     // 自分のチャットとピアのチャットを1本の時系列にまとめる
     function mergedMessages() {
       const all = localMessages.map(m => ({ ...m, ts: msgTs(m), from: null }));
-      peers.forEach(p => (p.messages || []).forEach(m => all.push({ ...m, ts: msgTs(m), from: p.name })));
+      peerAreas().forEach(p => (p.messages || []).forEach(m => all.push({ ...m, ts: msgTs(m), from: p.name })));
       return all.sort((a, b) => a.ts - b.ts);
     }
 
@@ -1007,12 +1245,23 @@
       return d.getTime() / 1000;
     }
 
+    // ▶と拡大ボタンは自前のハンドラでstopPropagationしているので、ここには上がってこない
     worldMapEl.addEventListener("click", e => {
-      if (peers.length === 0) return; // ピアなしのときは常に自分のルームの全画面
+      if (areas.length === 0) return; // エリアなしのときは常に自分のルームの全画面
       const tile = tiles.find(t => t.el === e.target.closest(".tile"));
       if (!tile || !tile.key || focusedKey === tile.key) return;
       focusedKey = tile.key;
       renderWorld();
+    });
+
+    nowPlayingStopBtn.addEventListener("click", () => {
+      tiles.forEach(stopTilePlayback);
+      renderWorld();
+    });
+
+    nowPlayingGoBtn.addEventListener("click", () => {
+      const playing = tiles.find(t => t.playing);
+      if (playing) { focusedKey = playing.key; renderWorld(); }
     });
 
     backToMapBtn.addEventListener("click", () => {
@@ -1091,12 +1340,14 @@
       return null;
     }
 
-    // youtube-nocookie.comを使うのは、埋め込み再生に伴うトラッキング/Cookieを減らすため
-    function buildYouTubeEmbed(id) {
+    // youtube-nocookie.comを使うのは、埋め込み再生に伴うトラッキング/Cookieを減らすため。
+    // autoplayはYouTubeルームの▶から呼ぶときだけ立てる(チャットの埋め込みは勝手に鳴らさない)。
+    // playsinlineが無いとiOSが強制的に全画面に飛ばすので、マス内再生が成立しなくなる
+    function buildYouTubeEmbed(id, { autoplay = false } = {}) {
       const wrap = document.createElement("div");
       wrap.className = "yt-embed";
       const iframe = document.createElement("iframe");
-      iframe.src = `https://www.youtube-nocookie.com/embed/${id}`;
+      iframe.src = `https://www.youtube-nocookie.com/embed/${id}${autoplay ? "?autoplay=1&playsinline=1" : ""}`;
       iframe.loading = "lazy";
       iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
       iframe.allowFullscreen = true;
@@ -1305,10 +1556,13 @@
       renderWorld();
     }
 
-    const PEER_ERRORS = {
+    const AREA_ERRORS = {
       "invalid url": "URLの形式が正しくありません(https://ホスト名 の形で入力してください)",
+      "invalid video": "YouTubeの動画URLとして読み取れませんでした",
+      "video unavailable": "その動画の情報を取得できませんでした(限定公開・削除済みかもしれません)",
       "already connected": "そのルームとは既につながっています",
-      "peer limit reached": "つなげるルームは8つまでです",
+      "area limit reached": "マップに置けるのは8マスまでです",
+      "not found": "そのエリアは見つかりませんでした",
       "admin required": "管理者合言葉が必要です",
     };
 
@@ -1318,7 +1572,7 @@
       const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
       let data;
       try {
-        const res = await fetch("/admin/peers", {
+        const res = await fetch("/admin/areas", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ passphrase }),
@@ -1331,67 +1585,110 @@
       }
       const panel = document.createElement("div");
       panel.id = "worldPanel";
-      const list = data.peers || [];
+      const list = data.areas || [];
       if (list.length === 0) {
         const empty = document.createElement("div");
         empty.className = "peer-empty";
-        empty.textContent = "まだどのルームともつながっていません";
+        empty.textContent = "マップにはまだ何も置かれていません";
         panel.appendChild(empty);
       }
-      list.forEach(p => {
-        const row = document.createElement("div");
-        row.className = "peer-row";
-        const info = document.createElement("span");
-        info.className = "peer-info";
-        info.textContent = p.type === "fork" ? `${p.name} (Redis版)` : p.name;
-        info.title = p.url;
-        const del = document.createElement("button");
-        del.type = "button";
-        del.className = "peer-del";
-        del.textContent = "解除";
-        del.addEventListener("click", () => changePeer({ action: "remove", id: p.id }));
-        row.append(info, del);
-        panel.appendChild(row);
+      list.forEach(a => panel.appendChild(buildAreaRow(a)));
+      panel.appendChild(buildAreaAddForm());
+      roomViewEl.appendChild(panel);
+    }
+
+    // 置いてあるエリア1件ぶんの行。YouTubeルームだけは動画の差し替え欄も持つ
+    function buildAreaRow(a) {
+      const row = document.createElement("div");
+      row.className = "peer-row";
+      const info = document.createElement("span");
+      info.className = "peer-info";
+      info.textContent = a.kind === "youtube" ? `📺 ${a.name}`
+                       : a.type === "fork" ? `${a.name} (Redis版)` : a.name;
+      info.title = a.kind === "youtube" ? `https://youtu.be/${a.videoId}` : (a.url || "");
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "peer-del";
+      del.textContent = a.kind === "youtube" ? "片付ける" : "解除";
+      del.addEventListener("click", () => changeArea({ action: "remove", id: a.id, kind: a.kind }));
+      row.append(info, del);
+      if (a.kind !== "youtube") return row;
+      const swapInput = document.createElement("input");
+      swapInput.type = "text";
+      swapInput.placeholder = "別の動画URLに差し替え";
+      const swap = () => changeArea({ action: "update", id: a.id, kind: "youtube", url: swapInput.value.trim() });
+      swapInput.addEventListener("keydown", e => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); swap(); }
       });
+      const swapBtn = document.createElement("button");
+      swapBtn.type = "button";
+      swapBtn.textContent = "変更";
+      swapBtn.addEventListener("click", swap);
+      const sub = document.createElement("div");
+      sub.className = "peer-swap";
+      sub.append(swapInput, swapBtn);
+      row.appendChild(sub);
+      return row;
+    }
+
+    // 新しくエリアを置くフォーム。種別で入力欄の意味が変わるので、選択に応じて出し分ける
+    function buildAreaAddForm() {
+      const kindSelect = document.createElement("select");
+      kindSelect.innerHTML = `<option value="peer">もくもくルーム</option><option value="youtube">YouTubeルーム</option>`;
       const urlInput = document.createElement("input");
       urlInput.type = "text";
-      urlInput.placeholder = "相手ルームのURL (https://...)";
       const nameInput = document.createElement("input");
       nameInput.type = "text";
-      nameInput.placeholder = "表示名 (任意)";
       // fork型はelm200版(FastAPI+Redis)向けの読み替えアダプタを使う。向こうのRedis消費を抑えるため
       // 巡回間隔も別扱いになる(config/settings.jsonのworld.fork_poll_interval_sec)
       const typeSelect = document.createElement("select");
       typeSelect.innerHTML = `<option value="native">通常</option><option value="fork">Redis版</option>`;
-      const submit = () => changePeer({
-        action: "add", url: urlInput.value.trim(), name: nameInput.value.trim(), type: typeSelect.value,
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      const syncKind = () => {
+        const youtube = kindSelect.value === "youtube";
+        urlInput.placeholder = youtube ? "YouTubeの動画URL" : "相手ルームのURL (https://...)";
+        nameInput.placeholder = youtube ? "表示名 (任意/未指定なら動画タイトル)" : "表示名 (任意)";
+        typeSelect.hidden = youtube;
+        addBtn.textContent = youtube ? "置く" : "つなぐ";
+      };
+      kindSelect.addEventListener("change", syncKind);
+      syncKind();
+      const submit = () => changeArea({
+        action: "add", kind: kindSelect.value, url: urlInput.value.trim(),
+        name: nameInput.value.trim(), type: typeSelect.value,
       });
       [urlInput, nameInput].forEach(el => el.addEventListener("keydown", e => {
         if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
       }));
-      const addBtn = document.createElement("button");
-      addBtn.type = "button";
-      addBtn.textContent = "つなぐ";
       addBtn.addEventListener("click", submit);
       const add = document.createElement("div");
       add.className = "peer-add";
-      add.append(urlInput, nameInput, typeSelect, addBtn);
-      panel.appendChild(add);
-      roomViewEl.appendChild(panel);
+      add.append(kindSelect, urlInput, nameInput, typeSelect, addBtn);
+      return add;
     }
 
-    async function changePeer(body) {
-      if (body.action === "add" && !body.url) { alert("相手ルームのURLを入力してください"); return; }
-      if (body.action === "remove" && !confirm("この接続を解除しますか？")) return;
+    async function changeArea(body) {
+      const youtube = body.kind === "youtube";
+      if (body.action !== "remove" && !body.url) {
+        alert(youtube ? "YouTubeの動画URLを入力してください" : "相手ルームのURLを入力してください");
+        return;
+      }
+      if (body.action === "remove" &&
+          !confirm(youtube ? "このYouTubeルームを片付けますか？" : "この接続を解除しますか？")) return;
       const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
       try {
-        const res = await fetch("/admin/peer", {
+        const res = await fetch("/admin/area", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...body, passphrase }),
         });
         const data = await res.json();
-        if (!res.ok) { alert(PEER_ERRORS[data.error] || "操作に失敗しました"); return; }
+        if (!res.ok) { alert(AREA_ERRORS[data.error] || "操作に失敗しました"); return; }
+        // サムネは取れたがoEmbedが拒否した動画。多くは埋め込み禁止で、マスには置けても再生できない
+        if (data.embeddable === false) {
+          alert("この動画は外部サイトへの埋め込みが許可されていない可能性があります。\nマスには置きましたが、参加者の画面で再生できないかもしれません。");
+        }
       } catch {
         alert("操作に失敗しました");
         return;
@@ -1409,9 +1706,9 @@
         await checkAdmin();
         localMessages = await msgRes.json();
         const world = await worldRes.json();
-        peers = Array.isArray(world.peers) ? world.peers : [];
-        // 拡大表示中のピアが解除されたらマップ表示に戻す
-        if (focusedKey && focusedKey !== "self" && !peers.some(p => p.id === focusedKey)) focusedKey = null;
+        areas = Array.isArray(world.areas) ? world.areas : [];
+        // 拡大表示中のエリアが片付けられたらマップ表示に戻す
+        if (focusedKey && focusedKey !== "self" && !areas.some(a => a.id === focusedKey)) focusedKey = null;
         renderBoard(await boardRes.json());
         renderStatus(await statusRes.json());
         render(mergedMessages());

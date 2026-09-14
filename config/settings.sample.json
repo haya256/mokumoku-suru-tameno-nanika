@@ -15,5 +15,9 @@
     "subnet_id": "subnet-REPLACE_ME",
     "iam_instance_profile_name": "mokumoku-ssm-profile",
     "auto_terminate_hours": 6
+  },
+  "world": {
+    "areas": [],
+    "fork_poll_interval_sec": 60
   }
 }

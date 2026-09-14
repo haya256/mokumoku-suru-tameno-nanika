@@ -48,7 +48,7 @@ _settings_write_lock = threading.Lock()
 # ワールドマップ: 他のもくもくルーム(ピア)の情報を自分のサーバーが取りに行って参加者に中継する。
 # ブラウザから相手サーバーを直接叩かせないことで、CORS設定が不要になり、参加者が何人いても
 # 相手への負荷が一定になり、参加者のIPが相手に渡らない
-MAX_PEERS = 8            # 中央(自分)を除いた3×3マップの周囲8マス
+MAX_AREAS = 8            # 中央(自分)を除いた3×3マップの周囲8マス
 PEER_POLL_INTERVAL = 5   # ネイティブ型ピアを巡回する間隔(秒)。クライアントの2秒pollとは独立
 PEER_TIMEOUT = 5
 PEER_JSON_MAX = 1_000_000
@@ -65,8 +65,16 @@ WEBP_MAGIC_TAIL = b"WEBP"
 # config/settings.json の world.fork_poll_interval_sec で管理者が調整できる(再起動不要)
 FORK_POLL_INTERVAL_DEFAULT = 60
 FORK_SSE_MAX = 2_000_000  # SSEの最初の1イベントを読む際の上限バイト数(以降は読まず切断する)
+
+# YouTubeエリア: 管理者が指定した動画1本を置けるマス。サムネイルは部屋画像と同じく自サーバーが中継し、
+# 参加者が再生ボタンを押すまでブラウザはYouTubeと通信しない(=勝手に再生が始まらない)
+# 動画IDは必ずASCII限定で検証する。Pythonの \w はUnicodeマッチなので全角文字が通ってしまう
+YOUTUBE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{11}")
+YOUTUBE_THUMB_MAX = 1_000_000  # 実測で最大のmaxresdefaultでも100KB弱。部屋画像の6MB枠を使い回す必要はない
+JPEG_MAGIC = b"\xff\xd8"
+
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
-peer_images = {}        # peer_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
+area_images = {}        # area_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str}
 peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(fork型のみ使う)
 
@@ -142,11 +150,32 @@ def list_room_images():
 
 PEER_TYPES = ("native", "fork")  # native: このリポジトリ系統(Flask+ポーリング) / fork: elm200版(FastAPI+Redis+SSE)
 
-# ピア一覧は毎回settings.jsonから読み直す。巡回スレッドもこれを使うので、管理者はサーバー稼働中に
-# 接続・解除でき再起動が要らない(合言葉や部屋画像が再起動不要なのと同じ流儀)
+# エリア一覧は毎回settings.jsonから読み直す。巡回スレッドもこれを使うので、管理者はサーバー稼働中に
+# 設置・撤去でき再起動が要らない(合言葉や部屋画像が再起動不要なのと同じ流儀)。
+# 旧バージョンが書いたworld.peersは、kind未指定=peerとして読めるのでそのまま受け入れる
+# (書き込み時にworld.areasへ正規化される)
+def load_areas():
+    world = load_settings().get("world", {})
+    raw = world.get("areas")
+    if not isinstance(raw, list):
+        raw = world.get("peers")
+    if not isinstance(raw, list):
+        return []
+    areas = []
+    for a in raw:
+        if not isinstance(a, dict):
+            continue
+        # kindは手書きされうる(settings.jsonは手編集可とREADMEで案内している)。
+        # 欠損はpeer扱いにし、未知の種別は落とさずそのまま通す(クライアント側が霧マスにする)
+        areas.append({**a, "kind": a.get("kind") or "peer"})
+    return areas
+
+def find_area(area_id):
+    return next((a for a in load_areas() if a.get("id") == area_id), None)
+
+# ピア(他のもくもくルーム)だけを抜き出す。巡回スレッドとチャット/在室者のマージはこちらを使う
 def load_peers():
-    peers = load_settings().get("world", {}).get("peers")
-    return [p for p in peers if isinstance(p, dict)] if isinstance(peers, list) else []
+    return [a for a in load_areas() if a.get("kind") == "peer"]
 
 def find_peer(peer_id):
     return next((p for p in load_peers() if p.get("id") == peer_id), None)
@@ -171,31 +200,54 @@ def normalize_peer_url(url):
         return None
     return url
 
-def add_peer(url, name, peer_type):
-    if peer_type not in PEER_TYPES:
-        peer_type = "native"
+# mutateの内側でエリア一覧を取り出す共通処理。旧world.peersが残っていればworld.areasへ移し替える
+# (両方を残すとareasを消したときに古いpeersが亡霊のように復活するため、peersは必ず捨てる)
+def _areas_for_write(settings):
+    world = settings.setdefault("world", {})
+    raw = world.get("areas")
+    if not isinstance(raw, list):
+        raw = world.get("peers") if isinstance(world.get("peers"), list) else []
+    world.pop("peers", None)
+    areas = [{**a, "kind": a.get("kind") or "peer"} for a in raw if isinstance(a, dict)]
+    world["areas"] = areas
+    return areas
+
+# エリアをマップの空きマスに置く。extraには種別ごとの追加フィールドを渡す
+# (peerならurl/type、youtubeならvideoId)
+def add_area(kind, name, extra):
     def mutate(settings):
-        world = settings.setdefault("world", {})
-        peers = [p for p in world.get("peers", []) if isinstance(p, dict)]
-        world["peers"] = peers
-        if any(p.get("url") == url for p in peers):
+        areas = _areas_for_write(settings)
+        # 同じ相手ルームを二重に登録させない。youtubeエリアはurlを持たないので対象外
+        # (peer同士の比較に限定しないと、url無し同士がNone==Noneで重複と誤判定される)
+        if kind == "peer" and any(a.get("kind") == "peer" and a.get("url") == extra.get("url") for a in areas):
             return {"error": "duplicate"}
-        if len(peers) >= MAX_PEERS:
+        # 上限は「8マス」。種別をまたいで1つの枠を取り合う
+        if len(areas) >= MAX_AREAS:
             return {"error": "full"}
         # 空いているマスからランダムに選んで以降固定。設定に保存するので再起動しても動かない
-        used = {p.get("slot") for p in peers}
-        peer = {"id": secrets.token_hex(4), "url": url, "name": name, "type": peer_type,
-                "slot": random.choice([s for s in range(MAX_PEERS) if s not in used])}
-        peers.append(peer)
-        return {"peer": peer}
+        used = {a.get("slot") for a in areas}
+        area = {"id": secrets.token_hex(4), "kind": kind, "name": name,
+                "slot": random.choice([s for s in range(MAX_AREAS) if s not in used]), **extra}
+        areas.append(area)
+        return {"area": area}
     return update_settings(mutate)
 
-def remove_peer(peer_id):
+def remove_area(area_id):
     def mutate(settings):
-        world = settings.setdefault("world", {})
-        peers = [p for p in world.get("peers", []) if isinstance(p, dict)]
-        world["peers"] = [p for p in peers if p.get("id") != peer_id]
-        return next((p for p in peers if p.get("id") == peer_id), None)
+        areas = _areas_for_write(settings)
+        settings["world"]["areas"] = [a for a in areas if a.get("id") != area_id]
+        return next((a for a in areas if a.get("id") == area_id), None)
+    return update_settings(mutate)
+
+# 既存エリアの一部フィールドだけを書き換える(動画の差し替えなど)。id/kind/slotは動かさない
+def update_area(area_id, fields):
+    def mutate(settings):
+        areas = _areas_for_write(settings)
+        area = next((a for a in areas if a.get("id") == area_id), None)
+        if area is None:
+            return None
+        area.update(fields)
+        return area
     return update_settings(mutate)
 
 # 中継先は下記の決め打ちパスのみ。任意パスのプロキシにはしない
@@ -209,6 +261,73 @@ def fetch_peer_bytes(url, limit):
 
 def fetch_peer_json(url):
     return _json.loads(fetch_peer_bytes(url, PEER_JSON_MAX).decode("utf-8"))
+
+# YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/)、または生の動画IDから11文字のIDを取り出す。
+# index.htmlのextractYouTubeId()と同じ判定をサーバー側でもやる(クライアントの検証は当てにしない)
+def extract_youtube_id(value):
+    value = (value or "").strip()
+    if not value:
+        return None
+    ok = lambda s: s if YOUTUBE_ID_PATTERN.fullmatch(s or "") else None
+    if "/" not in value and "?" not in value:
+        return ok(value)  # 生のIDを直接貼られた場合
+    try:
+        u = urllib.parse.urlparse(value if "//" in value else f"https://{value}")
+    except ValueError:
+        return None
+    host = (u.hostname or "").removeprefix("www.").removeprefix("m.")
+    if host == "youtu.be":
+        return ok(u.path.lstrip("/").split("/")[0])
+    if host in ("youtube.com", "youtube-nocookie.com"):
+        if u.path == "/watch":
+            return ok(urllib.parse.parse_qs(u.query).get("v", [""])[0])
+        m = re.fullmatch(r"/(?:shorts|embed|live)/([^/]+)", u.path)
+        if m:
+            return ok(m.group(1))
+    return None
+
+# サムネイルは自サーバーが取得して参加者に中継する(部屋画像と同じ流儀)。動画IDは検証済みなので
+# パスに記号が混ざることはなく、組み立て先はi.ytimg.comの決め打ちパスに固定される。
+# hqdefault(480x360)は必ずあるが4:3で上下に黒帯が焼き込まれているため使わない。16:9のものを
+# 大きい順に試し、maxresdefault(1280x720)が無ければmqdefault(320x180)に落とす
+YOUTUBE_THUMB_NAMES = ("maxresdefault.jpg", "mqdefault.jpg")
+
+def fetch_youtube_thumbnail(video_id):
+    last_error = None
+    for name in YOUTUBE_THUMB_NAMES:
+        try:
+            data = fetch_peer_bytes(f"https://i.ytimg.com/vi/{video_id}/{name}", YOUTUBE_THUMB_MAX)
+        except Exception as e:
+            last_error = e
+            continue
+        # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
+        if not data.startswith(JPEG_MAGIC):
+            last_error = ValueError("not a jpeg image")
+            continue
+        return data
+    raise last_error or ValueError("no thumbnail available")
+
+# 動画タイトルをoEmbedから取る(APIキー不要)。表示名が未指定のときのフォールバックに使うだけなので、
+# 取れなくても機能は成立する。埋め込み禁止・非公開の動画はここが401/404になるので事前警告にも使える
+def fetch_youtube_title(video_id):
+    watch_url = urllib.parse.quote(f"https://www.youtube.com/watch?v={video_id}", safe="")
+    info = fetch_peer_json(f"https://www.youtube.com/oembed?url={watch_url}&format=json")
+    # タイトルはシステムメッセージとDiscordにも載るので、ピア名と同じく改行を潰して長さを切る。
+    # 切った拍子に開き括弧だけが残ると尻切れ感が強いので、末尾の区切り文字はまとめて落とす
+    return " ".join(str(info.get("title") or "").split())[:40].rstrip(" -–—([{「『【（").strip() or None
+
+# サムネをキャッシュに載せる。versionに動画IDを入れておくと、差し替え時だけ取り直せる
+def refresh_youtube_thumbnail(area_id, video_id):
+    # settings.jsonを手編集された場合に備えて、取りに行く前にIDの形を確かめる
+    if not YOUTUBE_ID_PATTERN.fullmatch(video_id or ""):
+        raise ValueError("invalid video id")
+    cached = area_images.get(area_id)
+    # ピアの部屋画像と違い相手が黙って中身を差し替えることはないので、PEER_IMAGE_MAX_AGEの
+    # 期限切れ再取得は当てない(5分ごとに無意味にytimgを叩かないため)
+    if cached and cached["version"] == video_id:
+        return
+    area_images[area_id] = {"data": fetch_youtube_thumbnail(video_id), "mime": "image/jpeg",
+                            "version": video_id, "at": time.time()}
 
 # fork型ピア(elm200版)向け。GET /api/events はSSEで、接続直後に現在の全状態を
 # `data: {...}\n\n` で1回配信してから待機ループに入る仕様(2026-09-13時点で確認)。
@@ -263,7 +382,7 @@ def refresh_peer(peer):
 # 部屋画像は相手のバージョンが変わったときだけ取り直す(毎回取ると数百KBが巡回のたびに流れる)。
 # ただし相手が再起動するとバージョンは0に戻りうるので、それだけに頼らず一定時間で取り直す
 def refresh_peer_image(pid, url, peer_type, version):
-    cached = peer_images.get(pid)
+    cached = area_images.get(pid)
     if cached and cached["version"] == version and time.time() - cached["at"] < PEER_IMAGE_MAX_AGE:
         return
     if peer_type == "fork":
@@ -280,19 +399,34 @@ def refresh_peer_image(pid, url, peer_type, version):
         if data[:4] != WEBP_MAGIC_HEAD or data[8:12] != WEBP_MAGIC_TAIL:
             raise ValueError("not a webp image")
         mime = "image/webp"
-    peer_images[pid] = {"data": data, "mime": mime, "version": version, "at": time.time()}
+    area_images[pid] = {"data": data, "mime": mime, "version": version, "at": time.time()}
 
+# 巡回して外から取ってくる必要があるのはピアだけだが、キャッシュの掃除は全エリアを見て判断する。
+# area_imagesはYouTubeエリアのサムネも入っているので、ピアのidだけで掃除すると5秒ごとに
+# サムネが捨てられて取り直しのループになる
 def poll_peers_once():
-    peers = load_peers()
-    ids = {p.get("id") for p in peers}
-    # 設定から消えたピアのキャッシュは捨てる。残すとメモリを食い続けるうえ、
+    areas = load_areas()
+    area_ids = {a.get("id") for a in areas}
+    peers = [a for a in areas if a.get("kind") == "peer"]
+    peer_ids = {p.get("id") for p in peers}
+    # 設定から消えたエリアのキャッシュは捨てる。残すとメモリを食い続けるうえ、
     # 同じURLを付け直したときに取り直す前の古い内容が一瞬見えてしまう
-    for pid in [p for p in peer_cache if p not in ids]:
+    for aid in [a for a in area_images if a not in area_ids]:
+        area_images.pop(aid, None)
+    for pid in [p for p in peer_cache if p not in peer_ids]:
         peer_cache.pop(pid, None)
-        peer_images.pop(pid, None)
         peer_last_polled.pop(pid, None)
-    for key in [k for k in peer_chara_images if k[0] not in ids]:
+    for key in [k for k in peer_chara_images if k[0] not in peer_ids]:
         peer_chara_images.pop(key, None)
+    # YouTubeエリアのサムネは設置・差し替え時に同期取得しているので、ここに残るのは
+    # 「サーバーを再起動してインメモリのキャッシュが消えた」場合の取り直しだけ
+    for a in areas:
+        if a.get("kind") != "youtube" or not a.get("id"):
+            continue
+        try:
+            refresh_youtube_thumbnail(a["id"], a.get("videoId"))
+        except Exception as e:
+            print(f"[areas] {a.get('name') or a['id']} のサムネイル: {e}")
     # fork型ピアはRedisバックエンドでアクセス1回のコストが高いため、ネイティブ型と同じ5秒間隔では
     # 巡回しない。設定された間隔が経過したものだけを対象に加える
     interval = fork_poll_interval()
@@ -308,7 +442,7 @@ def poll_peers_once():
         targets.append(p)
     if targets:
         # 応答しないピアが他のピアの鮮度を巻き添えにしないよう並列に取りに行く
-        with ThreadPoolExecutor(max_workers=MAX_PEERS) as pool:
+        with ThreadPoolExecutor(max_workers=MAX_AREAS) as pool:
             list(pool.map(refresh_peer, targets))
 
 def peer_poll_loop():
@@ -417,13 +551,14 @@ def chara_custom(cid):
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
-# ピアの部屋画像を中継。実体は巡回スレッドが取得済みのバイト列なので、ここでは相手サーバーに触れない。
-# native型はwebp、fork型はpngと形式が違うため、拡張子は付けずキャッシュ済みのmimeをそのまま返す。
+# エリアのマス絵を中継。ピアなら相手の部屋画像、YouTubeエリアなら動画のサムネイル。
+# 実体は取得済みのバイト列なので、ここから外部サーバーに触れることはない。
+# 形式がwebp(native)/png(fork)/jpeg(youtube)と分かれるため、拡張子は付けずキャッシュ済みのmimeを返す。
 # /room-image-preview と同じくGETに合言葉は載せない方針
-@app.route("/peer-room-image/<peer_id>")
-def peer_room_image(peer_id):
-    img = peer_images.get(peer_id)
-    if not img or not find_peer(peer_id):
+@app.route("/area-image/<area_id>")
+def area_image(area_id):
+    img = area_images.get(area_id)
+    if not img or not find_area(area_id):
         return jsonify({"error": "not found"}), 404
     return Response(img["data"], mimetype=img.get("mime", "image/webp"),
                     headers={"X-Content-Type-Options": "nosniff",
@@ -466,26 +601,32 @@ def get_status():
         discord = "on"
     return jsonify({"discord": discord, "roomImageVersion": room_image_version})
 
-# 巡回スレッドが貯めたピアの状態をまとめて返す。ここから相手サーバーへのアクセスは発生しないので、
-# クライアントの2秒pollと相手を叩く5秒間隔は完全に独立している
+# マップに置かれたエリアをまとめて返す。ピアについては巡回スレッドが貯めた状態を返すだけで、
+# ここから相手サーバーへのアクセスは発生しない(クライアントの2秒pollと5秒巡回は完全に独立)。
+# 未認証で開けるので、相手ルームのURLはここには含めない(表示名とnetlocまで)
 @app.route("/world")
 def get_world():
-    peers = []
-    for peer in load_peers():
-        cached = peer_cache.get(peer.get("id"), {})
-        peers.append({
-            "id": peer.get("id"),
-            "name": peer.get("name") or urllib.parse.urlparse(peer.get("url", "")).netloc,
-            "slot": peer.get("slot", 0),
+    areas = []
+    for area in load_areas():
+        aid = area.get("id")
+        # 中継できる絵があるか。取得前にクライアントが404を踏むのを避けるために返す
+        common = {"id": aid, "kind": area.get("kind"), "slot": area.get("slot", 0),
+                  "hasImage": aid in area_images}
+        if area.get("kind") == "youtube":
+            areas.append({**common, "name": area.get("name") or "YouTube",
+                          "videoId": area.get("videoId")})
+            continue
+        cached = peer_cache.get(aid, {})
+        areas.append({
+            **common,
+            "name": area.get("name") or urllib.parse.urlparse(area.get("url", "")).netloc,
             # 未取得はnull(「接続中」表示)、Falseは「接続できません」表示
             "ok": cached.get("ok"),
-            # 部屋画像が中継できる状態か。取得前にクライアントが404を踏むのを避けるために返す
-            "hasImage": peer.get("id") in peer_images,
             "board": cached.get("board", []),
             "messages": cached.get("messages", []),
             "roomImageVersion": cached.get("roomImageVersion", 0),
         })
-    return jsonify({"peers": peers})
+    return jsonify({"areas": areas})
 
 @app.route("/messages", methods=["GET"])
 def get_messages():
@@ -606,42 +747,99 @@ def admin_set_room_image():
     add_system_message(f"🖼️ 管理者が部屋画像を {filename} に変更しました")
     return jsonify({"ok": True, "file": filename, "version": room_image_version})
 
-# ピア一覧の取得: 管理者合言葉必須(kick/room-imagesと同型のゲート)
-@app.route("/admin/peers", methods=["POST"])
-def admin_peers():
+# エリア一覧の取得: 管理者合言葉必須(kick/room-imagesと同型のゲート)。
+# /world と違って相手ルームのURLも返す(管理画面で「どこにつないでいるか」を確かめるため)
+@app.route("/admin/areas", methods=["POST"])
+def admin_areas():
     data = request.get_json()
     supplied = ((data or {}).get("passphrase") or "").strip()
     if not is_admin_passphrase(supplied):
         return jsonify({"error": "admin required"}), 403
-    peers = [{"id": p.get("id"), "url": p.get("url"), "name": p.get("name"),
-              "type": p.get("type", "native")} for p in load_peers()]
-    return jsonify({"peers": peers, "max": MAX_PEERS})
+    areas = [{"id": a.get("id"), "kind": a.get("kind"), "name": a.get("name"),
+              "url": a.get("url"), "type": a.get("type", "native"), "videoId": a.get("videoId")}
+             for a in load_areas()]
+    return jsonify({"areas": areas, "max": MAX_AREAS})
 
-# 接続・解除の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
-@app.route("/admin/peer", methods=["POST"])
-def admin_peer():
+# YouTubeエリアを置くときの共通処理。サムネとタイトルはここで同期的に取りに行く。
+# 巡回スレッド任せにすると、置いた直後の数秒間マスが空白になるうえ、動画を差し替えたときに
+# 新しいキャッシュバスターURLで古いサムネが返り、Cache-Controlの24時間がブラウザに焼き付いてしまう
+def prepare_youtube_area(data):
+    video_id = extract_youtube_id(data.get("url") or data.get("videoId"))
+    if not video_id:
+        return None, (jsonify({"error": "invalid video"}), 400)
+    # 削除済み・限定公開などサムネイルすら取れない動画は、置いても意味がないのでここで弾く
+    try:
+        thumbnail = fetch_youtube_thumbnail(video_id)
+    except Exception as e:
+        print(f"[areas] サムネイル取得に失敗: {e}")
+        return None, (jsonify({"error": "video unavailable"}), 400)
+    # oEmbedは埋め込みを禁止している動画に401を返すので、タイトルが要らない場合でも必ず叩いて
+    # 「置けたのに再生できない」を事前に警告する。ただし通信の一時的な失敗と区別が付かないため、
+    # 設置自体は止めない(サムネが取れている以上、動画そのものは存在している)
+    title = None
+    try:
+        title = fetch_youtube_title(video_id)
+    except Exception as e:
+        print(f"[areas] タイトル取得に失敗: {e}")
+    # 名前はシステムメッセージとDiscordにも載るので、改行を潰して長さを切る
+    name = " ".join((data.get("name") or "").split())[:40] or title
+    return {"videoId": video_id, "name": name or "YouTube", "thumbnail": thumbnail,
+            "embeddable": title is not None}, None
+
+# 取得済みのサムネをそのエリアのキャッシュに載せる(巡回スレッドの取り直しを待たせないため)
+def cache_youtube_thumbnail(area_id, prepared):
+    area_images[area_id] = {"data": prepared["thumbnail"], "mime": "image/jpeg",
+                            "version": prepared["videoId"], "at": time.time()}
+
+# 設置・撤去・差し替えの実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
+@app.route("/admin/area", methods=["POST"])
+def admin_area():
     data = request.get_json() or {}
     supplied = (data.get("passphrase") or "").strip()
     if not is_admin_passphrase(supplied):
         return jsonify({"error": "admin required"}), 403
     action = (data.get("action") or "").strip()
+    kind = (data.get("kind") or "peer").strip()
+    if action == "add" and kind == "youtube":
+        prepared, error = prepare_youtube_area(data)
+        if error:
+            return error
+        result = add_area("youtube", prepared["name"], {"videoId": prepared["videoId"]})
+        if result.get("error") == "full":
+            return jsonify({"error": "area limit reached"}), 400
+        cache_youtube_thumbnail(result["area"]["id"], prepared)  # idはここで初めて決まる
+        add_system_message(f"📺 管理者がYouTubeルーム「{prepared['name']}」を置きました")
+        return jsonify({"ok": True, "area": result["area"], "embeddable": prepared["embeddable"]})
     if action == "add":
         url = normalize_peer_url(data.get("url"))
         if not url:
             return jsonify({"error": "invalid url"}), 400
-        # 名前はシステムメッセージとDiscordにも載るので、改行を潰して長さを切る
         name = " ".join((data.get("name") or "").split())[:40] or urllib.parse.urlparse(url).netloc
         peer_type = data.get("type") if data.get("type") in PEER_TYPES else "native"
-        result = add_peer(url, name, peer_type)
+        result = add_area("peer", name, {"url": url, "type": peer_type})
         if result.get("error") == "duplicate":
             return jsonify({"error": "already connected"}), 400
         if result.get("error") == "full":
-            return jsonify({"error": "peer limit reached"}), 400
+            return jsonify({"error": "area limit reached"}), 400
         add_system_message(f"🌏 管理者が「{name}」とつながりました")
-        return jsonify({"ok": True, "peer": result["peer"]})
+        return jsonify({"ok": True, "area": result["area"]})
+    # 差し替えは今のところYouTubeエリアの動画だけ。マスの位置(slot)は動かさない
+    if action == "update":
+        area = find_area((data.get("id") or "").strip())
+        if not area or area.get("kind") != "youtube":
+            return jsonify({"error": "not found"}), 404
+        prepared, error = prepare_youtube_area(data)
+        if error:
+            return error
+        update_area(area["id"], {"videoId": prepared["videoId"], "name": prepared["name"]})
+        cache_youtube_thumbnail(area["id"], prepared)
+        add_system_message(f"📺 管理者がYouTubeルームの動画を「{prepared['name']}」に変えました")
+        return jsonify({"ok": True, "embeddable": prepared["embeddable"]})
     if action == "remove":
-        removed = remove_peer((data.get("id") or "").strip())
-        if removed:
+        removed = remove_area((data.get("id") or "").strip())
+        if removed and removed.get("kind") == "youtube":
+            add_system_message(f"📺 管理者がYouTubeルーム「{removed.get('name')}」を片付けました")
+        elif removed:
             add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
         return jsonify({"ok": True})
     return jsonify({"error": "invalid action"}), 400
