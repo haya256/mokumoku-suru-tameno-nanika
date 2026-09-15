@@ -73,6 +73,11 @@ YOUTUBE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{11}")
 YOUTUBE_THUMB_MAX = 1_000_000  # 実測で最大のmaxresdefaultでも100KB弱。部屋画像の6MB枠を使い回す必要はない
 JPEG_MAGIC = b"\xff\xd8"
 
+# 時計エリア: サーバーが持つのは名前だけ。時刻は見ている人のブラウザのローカル時刻を
+# クライアントがそのまま描く(サーバーの時刻でもタイムゾーン指定でもない)ので、
+# 巡回もキャッシュも中継する絵も一切要らない
+DEFAULT_CLOCK_NAME = "時計"
+
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
 area_images = {}        # area_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str}
@@ -616,6 +621,10 @@ def get_world():
             areas.append({**common, "name": area.get("name") or "YouTube",
                           "videoId": area.get("videoId")})
             continue
+        # 時計はサーバーから渡すものが名前しかない(時刻は見ている人のブラウザが出す)
+        if area.get("kind") == "clock":
+            areas.append({**common, "name": area.get("name") or DEFAULT_CLOCK_NAME})
+            continue
         cached = peer_cache.get(aid, {})
         areas.append({
             **common,
@@ -810,6 +819,15 @@ def admin_area():
         cache_youtube_thumbnail(result["area"]["id"], prepared)  # idはここで初めて決まる
         add_system_message(f"📺 管理者がYouTubeルーム「{prepared['name']}」を置きました")
         return jsonify({"ok": True, "area": result["area"], "embeddable": prepared["embeddable"]})
+    # 時計は外から取ってくるものが何も無いので、名前を整えて置くだけ。
+    # peerの分岐より前に置くこと(下の add はpeerのフォールバックなので、URLを要求されてしまう)
+    if action == "add" and kind == "clock":
+        name = " ".join((data.get("name") or "").split())[:40] or DEFAULT_CLOCK_NAME
+        result = add_area("clock", name, {})
+        if result.get("error") == "full":
+            return jsonify({"error": "area limit reached"}), 400
+        add_system_message(f"🕐 管理者が時計「{name}」を置きました")
+        return jsonify({"ok": True, "area": result["area"]})
     if action == "add":
         url = normalize_peer_url(data.get("url"))
         if not url:
@@ -839,6 +857,8 @@ def admin_area():
         removed = remove_area((data.get("id") or "").strip())
         if removed and removed.get("kind") == "youtube":
             add_system_message(f"📺 管理者がYouTubeルーム「{removed.get('name')}」を片付けました")
+        elif removed and removed.get("kind") == "clock":
+            add_system_message(f"🕐 管理者が時計「{removed.get('name')}」を片付けました")
         elif removed:
             add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
         return jsonify({"ok": True})

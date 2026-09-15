@@ -111,6 +111,59 @@
     /* 再生中はマス名がYouTubeのコントロールバーと重なる */
     .tile.youtube.playing > .tile-label { display: none; }
 
+    /* 時計エリア。霧のマス(#a5a69f)と同系の低彩度にして、ピクセルアートの部屋と並んでも浮かせない
+       (.tile 既定の #eee のままだと真っ白で目立ちすぎる) */
+    .tile.clock {
+      background: #8f9a91;
+    }
+
+    /* 前のエリアの残骸を消す。resetTile() は img の src を外していないので部屋画像やサムネが
+       文字盤の裏に残り、.room-overlay は inset:0 の透明レイヤーなのでキャラが載ったままになる */
+    .tile.clock > img, .tile.clock > .room-overlay { display: none; }
+
+    /* 既定で隠し、時計のマスのときだけ出す。こうしておくと種別が入れ替わったときに
+       JSを1行も足さずに文字盤が消える(.tile.empty > * と同じ考え方) */
+    .clock-face { display: none; }
+
+    .tile.clock > .clock-face {
+      display: block;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      /* マスのクリック(拡大)を邪魔しない。.tile-label と同じ */
+      pointer-events: none;
+    }
+
+    /* 針の回転。transform ではなく rotate プロパティを使うのは、transform を丸ごと
+       上書きせず合成できることと、getComputedStyle で "78deg" と読めて検証しやすいため
+       (transform だと matrix になる) */
+    @keyframes clock-spin { from { rotate: 0deg; } to { rotate: 360deg; } }
+
+    .clock-face .hand {
+      transform-box: view-box;   /* 既定値のエンジン差でハマるので明示する */
+      transform-origin: 50px 45px;
+    }
+
+    /* 秒針の steps(60) は既定の jump-end であることが正しさの根拠。start にすると
+       丸ごと1秒進んだ時計になる。位相は syncClockHands() が負の animation-delay で合わせる */
+    .clock-face .hand.sec  { animation: clock-spin 60s    steps(60) infinite; }
+    .clock-face .hand.min  { animation: clock-spin 3600s  linear    infinite; }
+    .clock-face .hand.hour { animation: clock-spin 43200s linear    infinite; }
+
+    /* 数字は小さいマスだと7〜8pxに潰れるので、拡大したマスだけで出す(.cell .badge と同じ流儀) */
+    .clock-face .numeral { display: none; }
+    .tile.focused .clock-face .numeral { display: block; }
+
+    /* 秒針は周辺視野で1秒ごとに動き続けるので、動きを減らす設定では隠す。
+       animation: none は禁止(animation-name が変わると位相がリセットされる)、
+       display: none も避ける(アニメーションが破棄され、設定を戻したとき古い位相で復活する)。
+       visibility なら裏で回り続けるので、いつ戻しても正しい位置にいる。
+       分針と時針は事実上静止して見えるので残し、分まで読める時計として機能を保つ */
+    @media (prefers-reduced-motion: reduce) {
+      .clock-face .hand.sec { visibility: hidden; }
+    }
+
     /* 正方形のマスに16:9を上下中央で収める。マス全体に広げるとYouTube側が黒帯を作り、
        コントロールバーが映像から離れて間延びして見える */
     .tile-player {
@@ -930,6 +983,32 @@
     const SELF_INDEX = 4;
     const SLOT_TO_INDEX = [0, 1, 2, 3, 5, 6, 7, 8];
 
+    // 時計の文字盤。viewBoxで座標を固定するので、マスが120pxでも700pxでも破綻しない。
+    // 中心を(50,45)と上寄りにしてあるのは、下端の .tile-label(黒帯)が小さいマスでは
+    // 高さの14%ほどを占めるため。半径35.5+線幅1.5で文字盤の下端は82になり、帯と当たらない。
+    // 針は時刻を読み上げられないので、支援技術には丸ごと隠す
+    const CLOCK_FACE_SVG = `
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="45" r="35.5" fill="#f2ead8" stroke="#3b4252" stroke-width="3"/>
+        ${[...Array(12)].map((_, i) => {
+          const major = i % 3 === 0;  // 12/3/6/9 だけ太く長くする
+          return `<line x1="50" y1="13" x2="50" y2="${major ? 18 : 16}"
+                        stroke="#3b4252" stroke-width="${major ? 3 : 1.5}"
+                        transform="rotate(${i * 30} 50 45)"/>`;
+        }).join("")}
+        ${[12, 3, 6, 9].map((n, i) => {
+          const a = (i * 90 - 90) * Math.PI / 180;  // 12時を上にするため-90度回す
+          // 目盛りは中心から半径27まで伸びているので、数字はその内側(半径21)に置く
+          return `<text class="numeral" x="${50 + Math.cos(a) * 21}" y="${45 + Math.sin(a) * 21}"
+                        text-anchor="middle" dominant-baseline="central"
+                        font-size="9" font-weight="bold" fill="#3b4252">${n}</text>`;
+        }).join("")}
+        <line class="hand hour" x1="50" y1="51" x2="50" y2="27" stroke="#3b4252" stroke-width="4.5"/>
+        <line class="hand min"  x1="50" y1="53" x2="50" y2="18" stroke="#3b4252" stroke-width="3"/>
+        <line class="hand sec"  x1="50" y1="55" x2="50" y2="15" stroke="#c0392b" stroke-width="1.5"/>
+        <circle cx="50" cy="45" r="2.5" fill="#3b4252"/>
+      </svg>`;
+
     // マスは9つ作ったきり使い回す。毎pollで作り直すとキャラのCSSアニメーションがリセットされるため
     const tiles = [];
     for (let i = 0; i < 9; i++) {
@@ -968,9 +1047,16 @@
       zoomBtn.type = "button";
       zoomBtn.className = "tile-zoom";
       zoomBtn.hidden = true;
-      el.append(img, overlay, label, status, player, playBtn, zoomBtn);
+      // 時計エリア用。document.createElement("svg") はHTMLUnknownElementになって
+      // 何も描画されないので、文字列をinnerHTMLで流し込んでSVGとして解釈させる
+      const face = document.createElement("div");
+      face.className = "clock-face";
+      face.innerHTML = CLOCK_FACE_SVG;
+      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face);
       worldMapEl.appendChild(el);
-      const tile = { el, img, overlay, label, status, player, playBtn, zoomBtn,
+      const tile = { el, img, overlay, label, status, player, playBtn, zoomBtn, face,
+                     hands: { hour: face.querySelector(".hand.hour"), min: face.querySelector(".hand.min"),
+                              sec: face.querySelector(".hand.sec") },
                      cells: [...overlay.children], key: null, lastState: "", playing: false };
       // 再生状態はtile側に持つ。classListに持たせると、2秒ごとのrenderWorld()が
       // className を丸ごと書き換えるタイミングで消えてしまう
@@ -1131,6 +1217,11 @@
           renderRoomInto(tile, lastEntries, selfCharaUrl);
         } else if (slot.area.kind === "youtube") {
           renderYouTubeTile(tile, slot.area, focused);
+        } else if (slot.area.kind === "clock") {
+          // 拡大表示中は他のマスがdisplay:noneになり、CSSアニメーションが破棄される。
+          // 見えていないマスの針を合わせても無駄(表示された瞬間にその時刻で復活してしまう)なので、
+          // 実際に見えているかどうかを渡す
+          renderClockTile(tile, slot.area, focused, focus === null || focus === key);
         } else if (slot.area.kind === "peer") {
           renderPeerTile(tile, slot.area, focused);
         } else {
@@ -1142,6 +1233,66 @@
       renderNowPlaying();
       roomViewEl.classList.toggle("showing-self", focus === "self");
       backToMapBtn.hidden = !(areas.length > 0 && focusedKey !== null);
+    }
+
+    // 管理者が置いた掛け時計。出すのは見ている人の手元の時刻(サーバーの時刻ではない)。
+    // 針はCSSアニメーションが回すので、ここでやるのは位相合わせだけ。毎秒動くJSは存在しない
+    function renderClockTile(tile, area, focused, visible) {
+      setClass(tile.el, `tile clock${focused}`);
+      tile.label.textContent = area.name;
+      tile.status.hidden = true;
+      tile.playBtn.hidden = tile.zoomBtn.hidden = true;
+      // 隠れている間は触らない。display:none はCSSアニメーションを破棄するので、ここで位相を
+      // 書いても見えた瞬間に「書いた時刻」のまま復活して、ずれた時計が動き続けることになる。
+      // 見えたときに「いま針が指している時刻」を確かめて、違っていれば直す
+      if (visible && clockNeedsSync(tile)) syncClockHands(tile);
+    }
+
+    // 針が指している時刻と実時刻のずれをこれ以上許さない値(秒)。チクタクの1目盛りより小さくとる
+    const CLOCK_TOLERANCE_SEC = 0.5;
+
+    // いま実際に表示されているべき位相(秒)。sec/min/hour それぞれの周期に対する経過秒
+    function clockPhases() {
+      const n = new Date();
+      const sec = n.getSeconds() + n.getMilliseconds() / 1000;
+      const min = n.getMinutes() * 60 + sec;
+      return { sec, min, hour: (n.getHours() % 12) * 3600 + min };
+    }
+
+    // 針が本当に指している位相(秒)。Animation.currentTime は delay を含まないので、
+    // 実際に描かれている位置は currentTime から delay を引いた値になる。
+    // null ならアニメーションが生成されていない(または破棄された)
+    function shownPhase(hand, period) {
+      const anim = hand.getAnimations()[0];
+      if (!anim || anim.currentTime === null) return null;
+      const local = (anim.currentTime - anim.effect.getTiming().delay) / 1000;
+      return ((local % period) + period) % period;
+    }
+
+    // 「同期してから何秒経ったか」を自分で数える方式にすると、OSスリープやタブの凍結で
+    // アニメーションだけが止まった場合を取りこぼす。針が指している位置を直接読めば
+    // 原因によらず検出でき、何かの拍子にずれても次の描画で自力で直る。
+    // プロパティを読むだけなのでスタイルの再計算は走らない
+    function clockNeedsSync(tile) {
+      const shown = shownPhase(tile.hands.sec, 60);
+      if (shown === null) return true;
+      const diff = Math.abs(shown - clockPhases().sec);
+      return Math.min(diff, 60 - diff) > CLOCK_TOLERANCE_SEC;
+    }
+
+    // 位相合わせ。動かすのは animation-delay だけにして、CSS を唯一の真実に保つ
+    // (Animation.currentTime を直接書くと、インラインの delay が残っている限り
+    //  次のスタイル再計算で元に戻されてしまう)。
+    // 描かれる位置は currentTime - delay なので、delay をその差に置けば狙った位相になる。
+    // まだアニメーションが無いときは経過0とみなす(= 負のdelayが初期位相になる)。
+    // キャラの揺れ(bob)を animationDelay でずらしているのと同じ仕組み
+    function syncClockHands(tile) {
+      for (const [name, phase] of Object.entries(clockPhases())) {
+        const hand = tile.hands[name];
+        const anim = hand.getAnimations()[0];
+        const currentTime = anim && anim.currentTime !== null ? anim.currentTime : 0;
+        hand.style.animationDelay = `${(currentTime - phase * 1000) / 1000}s`;
+      }
     }
 
     // つながった相手のもくもくルーム。中身は自分のルームと同じ9部屋なので renderRoomInto を使い回す
@@ -1277,6 +1428,13 @@
       const playing = tiles.find(t => t.playing);
       if (playing) { focusedKey = playing.key; renderWorld(); }
     });
+
+    // タブから戻ってきたときとbfcacheから復元されたとき。タブが隠れていただけなら針は
+    // 進んでいるが、OSがスリープしていた場合はアニメーションの時計だけが止まって遅れる。
+    // 2秒後のpollを待たずその場で描き直す(ずれていなければ何も起きない)
+    const resyncClocks = () => renderWorld();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) resyncClocks(); });
+    window.addEventListener("pageshow", resyncClocks);
 
     backToMapBtn.addEventListener("click", () => {
       focusedKey = null;
@@ -1611,21 +1769,50 @@
       roomViewEl.appendChild(panel);
     }
 
+    // エリアの種別ごとの見せ方。増えるたびに三項演算子を継ぎ足すと読めなくなるので表にまとめる。
+    // needsUrl は「置くのにURLを要る種別か」で、時計のように外から取るものが無い種別は false
+    const AREA_KINDS = {
+      peer: {
+        label: "もくもくルーム", needsUrl: true, addLabel: "つなぐ", delLabel: "解除",
+        confirm: "この接続を解除しますか？", urlHint: "相手ルームのURL (https://...)",
+        nameHint: "表示名 (任意)", missingUrl: "相手ルームのURLを入力してください",
+        title: a => a.url || "",
+        text: a => a.type === "fork" ? `${a.name} (Redis版)` : a.name,
+      },
+      youtube: {
+        label: "YouTubeルーム", needsUrl: true, addLabel: "置く", delLabel: "片付ける",
+        confirm: "このYouTubeルームを片付けますか？", urlHint: "YouTubeの動画URL",
+        nameHint: "表示名 (任意/未指定なら動画タイトル)", missingUrl: "YouTubeの動画URLを入力してください",
+        title: a => `https://youtu.be/${a.videoId}`,
+        text: a => `📺 ${a.name}`,
+      },
+      clock: {
+        label: "時計", needsUrl: false, addLabel: "置く", delLabel: "片付ける",
+        confirm: "この時計を片付けますか？", urlHint: "",
+        nameHint: "表示名 (任意/未指定なら「時計」)", missingUrl: "",
+        title: () => "見ている人の手元の時刻を表示します",
+        text: a => `🕐 ${a.name}`,
+      },
+    };
+
+    const areaKind = kind => AREA_KINDS[kind] || AREA_KINDS.peer;
+
     // 置いてあるエリア1件ぶんの行。YouTubeルームだけは動画の差し替え欄も持つ
     function buildAreaRow(a) {
+      const spec = areaKind(a.kind);
       const row = document.createElement("div");
       row.className = "peer-row";
       const info = document.createElement("span");
       info.className = "peer-info";
-      info.textContent = a.kind === "youtube" ? `📺 ${a.name}`
-                       : a.type === "fork" ? `${a.name} (Redis版)` : a.name;
-      info.title = a.kind === "youtube" ? `https://youtu.be/${a.videoId}` : (a.url || "");
+      info.textContent = spec.text(a);
+      info.title = spec.title(a);
       const del = document.createElement("button");
       del.type = "button";
       del.className = "peer-del";
-      del.textContent = a.kind === "youtube" ? "片付ける" : "解除";
+      del.textContent = spec.delLabel;
       del.addEventListener("click", () => changeArea({ action: "remove", id: a.id, kind: a.kind }));
       row.append(info, del);
+      // 差し替えられるのは今のところYouTubeの動画だけ
       if (a.kind !== "youtube") return row;
       const swapInput = document.createElement("input");
       swapInput.type = "text";
@@ -1648,7 +1835,8 @@
     // 新しくエリアを置くフォーム。種別で入力欄の意味が変わるので、選択に応じて出し分ける
     function buildAreaAddForm() {
       const kindSelect = document.createElement("select");
-      kindSelect.innerHTML = `<option value="peer">もくもくルーム</option><option value="youtube">YouTubeルーム</option>`;
+      kindSelect.innerHTML = Object.entries(AREA_KINDS)
+        .map(([k, spec]) => `<option value="${k}">${spec.label}</option>`).join("");
       const urlInput = document.createElement("input");
       urlInput.type = "text";
       const nameInput = document.createElement("input");
@@ -1660,11 +1848,14 @@
       const addBtn = document.createElement("button");
       addBtn.type = "button";
       const syncKind = () => {
-        const youtube = kindSelect.value === "youtube";
-        urlInput.placeholder = youtube ? "YouTubeの動画URL" : "相手ルームのURL (https://...)";
-        nameInput.placeholder = youtube ? "表示名 (任意/未指定なら動画タイトル)" : "表示名 (任意)";
-        typeSelect.hidden = youtube;
-        addBtn.textContent = youtube ? "置く" : "つなぐ";
+        const spec = areaKind(kindSelect.value);
+        // URLが要らない種別(時計など)ではURL欄ごと消す。空欄を残すと何を入れる欄か分からない
+        urlInput.hidden = !spec.needsUrl;
+        urlInput.placeholder = spec.urlHint;
+        nameInput.placeholder = spec.nameHint;
+        // 通常/Redis版の区別があるのは相手ルームにつなぐときだけ
+        typeSelect.hidden = kindSelect.value !== "peer";
+        addBtn.textContent = spec.addLabel;
       };
       kindSelect.addEventListener("change", syncKind);
       syncKind();
@@ -1683,13 +1874,13 @@
     }
 
     async function changeArea(body) {
-      const youtube = body.kind === "youtube";
-      if (body.action !== "remove" && !body.url) {
-        alert(youtube ? "YouTubeの動画URLを入力してください" : "相手ルームのURLを入力してください");
+      const spec = areaKind(body.kind);
+      // URLが要らない種別(時計など)はここで弾かない
+      if (body.action !== "remove" && spec.needsUrl && !body.url) {
+        alert(spec.missingUrl);
         return;
       }
-      if (body.action === "remove" &&
-          !confirm(youtube ? "このYouTubeルームを片付けますか？" : "この接続を解除しますか？")) return;
+      if (body.action === "remove" && !confirm(spec.confirm)) return;
       const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
       try {
         const res = await fetch("/admin/area", {
