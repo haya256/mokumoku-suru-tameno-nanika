@@ -53,8 +53,9 @@
     }
 
     .tile.focused, .tile.empty { cursor: default; }
-    .tile.empty > img, .tile.empty > .room-overlay,
-    .tile.empty > .tile-label, .tile.empty > .tile-status { display: none; }
+    /* 霧のマスでは中身を一切見せない。子要素を個別に列挙すると、エリアの種別を増やしたときに
+       足し忘れて取り残しが出るので(「?」は::afterなのでこの指定では消えない) */
+    .tile.empty > * { display: none; }
 
     /* 未接続のマスは「まだ何も無い土地に霧がかかっている」見た目にする。
        本物の部屋画像と張り合わないよう、彩度もコントラストも低めに抑える */
@@ -123,7 +124,17 @@
     }
 
     .tile-player[hidden] { display: none; }
-    .tile-player iframe { display: block; width: 100%; height: 100%; border: 0; }
+
+    /* 中身はチャット欄と同じ buildYouTubeEmbed() の .yt-embed。あちらは本文に馴染むよう
+       max-width と余白を持っているので、マスいっぱいに広げるために打ち消す
+       (小さいマスでは幅が360px未満で気づかないが、拡大すると頭打ちになって左上に取り残される) */
+    .tile-player > .yt-embed {
+      max-width: none;
+      margin-top: 0;
+      height: 100%;
+    }
+
+    .tile-player > .yt-embed iframe { border-radius: 0; }
 
     .tile-play {
       position: absolute;
@@ -1089,6 +1100,9 @@
       tile.key = null;
       tile.lastState = "";
       tile.status.hidden = true;
+      tile.playBtn.hidden = tile.zoomBtn.hidden = true;
+      tile.videoId = null;
+      tile.areaName = null;
       stopTilePlayback(tile);
     }
 
