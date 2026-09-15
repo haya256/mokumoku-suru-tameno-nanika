@@ -164,6 +164,53 @@
       .clock-face .hand.sec { visibility: hidden; }
     }
 
+    /* カレンダーエリア。時計(#8f9a91、寒色寄り)と隣り合っても種別の違いが色でも分かるよう、
+       同じ低彩度でも暖色寄り(紙のような色)にずらす */
+    .tile.calendar { background: #a08f7c; }
+
+    /* 前のエリアの残骸を消す。時計と同じ理由(resetTileはimg/room-overlayを個別に隠さない) */
+    .tile.calendar > img, .tile.calendar > .room-overlay { display: none; }
+
+    /* 既定で隠し、カレンダーのマスのときだけ出す(.tile.empty > * / .clock-face と同じ考え方) */
+    .calendar-face { display: none; }
+
+    .tile.calendar > .calendar-face {
+      display: flex;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      /* マスのクリック(拡大)を邪魔しない。.tile-label と同じ */
+      pointer-events: none;
+      color: #3b4252;
+    }
+
+    /* 未拡大: 年月(西暦+和暦併記)+日付の数字+曜日。拡大: 月グリッド。
+       時計のnumeralと同じ「小さいマスでは省略」の流儀だが、カレンダーは「今日が何年何月何日か」
+       まで出したいという要望に合わせ、未拡大でも年月情報を残す(時計の文字盤より情報量は多い) */
+    .calendar-face .cal-full { display: none; }
+    .tile.focused .calendar-face .cal-compact { display: none; }
+    .tile.focused .calendar-face .cal-full { display: flex; flex-direction: column; width: 88%; }
+
+    .calendar-face .cal-compact { display: flex; flex-direction: column; align-items: center; }
+    /* vwベースはタイル自体が min(50vw,100dvh)/3 で伸縮するので、他の要素(.tile-play等)と
+       同じ考え方でclamp()にして極端に小さい画面でもマスからはみ出させない */
+    .calendar-face .cal-yearmonth { font-size: clamp(0.5rem, 2.2vw, 0.75rem); text-align: center; line-height: 1.2; }
+    .calendar-face .cal-daynum { font-size: clamp(1.6rem, 6vw, 2.4rem); font-weight: bold; line-height: 1.1; }
+    .calendar-face .cal-weekday-solo { font-size: clamp(0.55rem, 2vw, 0.9rem); margin-top: 0.1em; }
+
+    .calendar-face .cal-month { text-align: center; font-weight: bold; margin-bottom: 0.3em; }
+    .calendar-face .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .calendar-face .cal-weekday { font-weight: bold; opacity: 0.7; }
+    /* 「今日」だけ強調。既存の入室ボタンの緑(#2a7)を流用して新色を増やさない */
+    .calendar-face .cal-day.today { background: #2a7; color: #fff; border-radius: 50%; }
+
     /* 正方形のマスに16:9を上下中央で収める。マス全体に広げるとYouTube側が黒帯を作り、
        コントロールバーが映像から離れて間延びして見える */
     .tile-player {
@@ -1009,6 +1056,57 @@
         <circle cx="50" cy="45" r="2.5" fill="#3b4252"/>
       </svg>`;
 
+    const CALENDAR_WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+
+    // 和暦の元号+年。改元テーブルを自前で持たず、Intlの日本暦カレンダーに委ねる
+    // (Node/主要ブラウザとも ja-JP-u-ca-japanese をサポート)
+    function japaneseEraYear(date) {
+      const parts = new Intl.DateTimeFormat("ja-JP-u-ca-japanese", { era: "short", year: "numeric" })
+        .formatToParts(date);
+      const era = parts.find(p => p.type === "era")?.value || "";
+      const year = parts.find(p => p.type === "year")?.value || "";
+      return `${era}${year}`;
+    }
+
+    // 「2026(令和8)年9月」のような年月見出し。未拡大の年月表示と、拡大時のグリッド見出しの両方で使う
+    function formatYearMonth(date, monthIndex) {
+      return `${date.getFullYear()}(${japaneseEraYear(date)})年${monthIndex + 1}月`;
+    }
+
+    // ある年月の日付セルのHTML。日曜始まり(日本の慣習)。今日がその年月と一致するときだけ
+    // 該当日に .today を付ける。前後月の余白セルは空にして日数だけを目立たせ、
+    // 最後の週を7の倍数まで埋めて月によって高さがガタつかないようにする
+    function buildCalendarGrid(year, monthIndex, today) {
+      const first = new Date(year, monthIndex, 1);
+      const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+      const startWeekday = first.getDay();
+      const isThisMonth = today.getFullYear() === year && today.getMonth() === monthIndex;
+      const cells = [];
+      for (let i = 0; i < startWeekday; i++) cells.push('<span class="cal-day empty"></span>');
+      for (let d = 1; d <= daysInMonth; d++) {
+        const isToday = isThisMonth && d === today.getDate();
+        cells.push(`<span class="cal-day${isToday ? " today" : ""}">${d}</span>`);
+      }
+      while (cells.length % 7 !== 0) cells.push('<span class="cal-day empty"></span>');
+      const head = CALENDAR_WEEKDAYS.map(w => `<span class="cal-weekday">${w}</span>`).join("");
+      return `<div class="cal-month">${formatYearMonth(first, monthIndex)}</div>
+        <div class="cal-grid">${head}${cells.join("")}</div>`;
+    }
+
+    // カレンダーの文字盤全体。未拡大用(年月+大きな数字+曜日)と拡大用(月グリッド)を両方作っておき、
+    // どちらを見せるかはCSSの.focusedだけで切り替える(表示されていない側はdisplay:noneなので
+    // アクセシビリティツリーにも重複して出ない)
+    function buildCalendarFaceHTML(today) {
+      const weekday = CALENDAR_WEEKDAYS[today.getDay()];
+      return `
+        <div class="cal-compact">
+          <div class="cal-yearmonth">${formatYearMonth(today, today.getMonth())}</div>
+          <div class="cal-daynum">${today.getDate()}</div>
+          <div class="cal-weekday-solo">${weekday}</div>
+        </div>
+        <div class="cal-full">${buildCalendarGrid(today.getFullYear(), today.getMonth(), today)}</div>`;
+    }
+
     // マスは9つ作ったきり使い回す。毎pollで作り直すとキャラのCSSアニメーションがリセットされるため
     const tiles = [];
     for (let i = 0; i < 9; i++) {
@@ -1052,11 +1150,16 @@
       const face = document.createElement("div");
       face.className = "clock-face";
       face.innerHTML = CLOCK_FACE_SVG;
-      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face);
+      // カレンダーエリア用。時計と違ってCSSアニメーションを使わないので参照保持の必要はなく、
+      // 日付が変わったときだけ丸ごと書き換える(calendarKeyで判定、renderCalendarTile参照)
+      const calFace = document.createElement("div");
+      calFace.className = "calendar-face";
+      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face, calFace);
       worldMapEl.appendChild(el);
       const tile = { el, img, overlay, label, status, player, playBtn, zoomBtn, face,
                      hands: { hour: face.querySelector(".hand.hour"), min: face.querySelector(".hand.min"),
                               sec: face.querySelector(".hand.sec") },
+                     calendarFace: calFace, calendarKey: null,
                      cells: [...overlay.children], key: null, lastState: "", playing: false };
       // 再生状態はtile側に持つ。classListに持たせると、2秒ごとのrenderWorld()が
       // className を丸ごと書き換えるタイミングで消えてしまう
@@ -1189,6 +1292,7 @@
       tile.playBtn.hidden = tile.zoomBtn.hidden = true;
       tile.videoId = null;
       tile.areaName = null;
+      tile.calendarKey = null;
       stopTilePlayback(tile);
     }
 
@@ -1222,6 +1326,8 @@
           // 見えていないマスの針を合わせても無駄(表示された瞬間にその時刻で復活してしまう)なので、
           // 実際に見えているかどうかを渡す
           renderClockTile(tile, slot.area, focused, focus === null || focus === key);
+        } else if (slot.area.kind === "calendar") {
+          renderCalendarTile(tile, slot.area, focused);
         } else if (slot.area.kind === "peer") {
           renderPeerTile(tile, slot.area, focused);
         } else {
@@ -1292,6 +1398,21 @@
         const anim = hand.getAnimations()[0];
         const currentTime = anim && anim.currentTime !== null ? anim.currentTime : 0;
         hand.style.animationDelay = `${(currentTime - phase * 1000) / 1000}s`;
+      }
+    }
+
+    // 管理者が置いたカレンダー。出すのは見ている人の手元の日付(サーバーでもタイムゾーン指定でもない)。
+    // 時計と違って連続アニメーションが無いので、日付キーが変わったときだけ書き直せば足りる
+    function renderCalendarTile(tile, area, focused) {
+      setClass(tile.el, `tile calendar${focused}`);
+      tile.label.textContent = area.name;
+      tile.status.hidden = true;
+      tile.playBtn.hidden = tile.zoomBtn.hidden = true;
+      const today = new Date();
+      const key = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+      if (tile.calendarKey !== key) {
+        tile.calendarKey = key;
+        tile.calendarFace.innerHTML = buildCalendarFaceHTML(today);
       }
     }
 
@@ -1792,6 +1913,13 @@
         nameHint: "表示名 (任意/未指定なら「時計」)", missingUrl: "",
         title: () => "見ている人の手元の時刻を表示します",
         text: a => `🕐 ${a.name}`,
+      },
+      calendar: {
+        label: "カレンダー", needsUrl: false, addLabel: "置く", delLabel: "片付ける",
+        confirm: "このカレンダーを片付けますか？", urlHint: "",
+        nameHint: "表示名 (任意/未指定なら「カレンダー」)", missingUrl: "",
+        title: () => "見ている人の手元の日付を表示します",
+        text: a => `📅 ${a.name}`,
       },
     };
 

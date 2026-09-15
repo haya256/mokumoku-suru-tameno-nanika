@@ -78,6 +78,11 @@ JPEG_MAGIC = b"\xff\xd8"
 # 巡回もキャッシュも中継する絵も一切要らない
 DEFAULT_CLOCK_NAME = "時計"
 
+# カレンダーエリア: 時計と同じくサーバーが持つのは名前だけ。日付は見ている人のブラウザの
+# ローカル日付をそのまま描く(サーバーの日付でもタイムゾーン指定でもない)ので、
+# 巡回もキャッシュも中継する絵も一切要らない
+DEFAULT_CALENDAR_NAME = "カレンダー"
+
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
 area_images = {}        # area_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str}
@@ -625,6 +630,10 @@ def get_world():
         if area.get("kind") == "clock":
             areas.append({**common, "name": area.get("name") or DEFAULT_CLOCK_NAME})
             continue
+        # カレンダーも時計と同じく、サーバーから渡すものが名前しかない
+        if area.get("kind") == "calendar":
+            areas.append({**common, "name": area.get("name") or DEFAULT_CALENDAR_NAME})
+            continue
         cached = peer_cache.get(aid, {})
         areas.append({
             **common,
@@ -828,6 +837,14 @@ def admin_area():
             return jsonify({"error": "area limit reached"}), 400
         add_system_message(f"🕐 管理者が時計「{name}」を置きました")
         return jsonify({"ok": True, "area": result["area"]})
+    # カレンダーも外から取ってくるものが何も無い。peerの分岐より前に置くこと
+    if action == "add" and kind == "calendar":
+        name = " ".join((data.get("name") or "").split())[:40] or DEFAULT_CALENDAR_NAME
+        result = add_area("calendar", name, {})
+        if result.get("error") == "full":
+            return jsonify({"error": "area limit reached"}), 400
+        add_system_message(f"📅 管理者がカレンダー「{name}」を置きました")
+        return jsonify({"ok": True, "area": result["area"]})
     if action == "add":
         url = normalize_peer_url(data.get("url"))
         if not url:
@@ -859,6 +876,8 @@ def admin_area():
             add_system_message(f"📺 管理者がYouTubeルーム「{removed.get('name')}」を片付けました")
         elif removed and removed.get("kind") == "clock":
             add_system_message(f"🕐 管理者が時計「{removed.get('name')}」を片付けました")
+        elif removed and removed.get("kind") == "calendar":
+            add_system_message(f"📅 管理者がカレンダー「{removed.get('name')}」を片付けました")
         elif removed:
             add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
         return jsonify({"ok": True})
