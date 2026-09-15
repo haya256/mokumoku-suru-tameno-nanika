@@ -9,6 +9,7 @@ import secrets
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import json as _json
@@ -210,6 +211,14 @@ def normalize_peer_url(url):
         return None
     return url
 
+# ブラウザエリア用。peerと違い任意のページを指すのでパス・クエリ・フラグメントを許可する
+def normalize_iframe_url(url):
+    url = (url or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    return url
+
 # mutateの内側でエリア一覧を取り出す共通処理。旧world.peersが残っていればworld.areasへ移し替える
 # (両方を残すとareasを消したときに古いpeersが亡霊のように復活するため、peersは必ず捨てる)
 def _areas_for_write(settings):
@@ -325,6 +334,28 @@ def fetch_youtube_title(video_id):
     # タイトルはシステムメッセージとDiscordにも載るので、ピア名と同じく改行を潰して長さを切る。
     # 切った拍子に開き括弧だけが残ると尻切れ感が強いので、末尾の区切り文字はまとめて落とす
     return " ".join(str(info.get("title") or "").split())[:40].rstrip(" -–—([{「『【（").strip() or None
+
+# ブラウザエリア用。埋め込み可否のベストエフォート判定。X-Frame-Options/CSPで「明らかに拒否」と
+# 分かる場合だけFalseにし、それ以外(判定不能・通信失敗・ドメイン限定のframe-ancestors等)はTrue側に
+# 倒す。誤って「埋め込めない」と警告して置くのを迷わせるより、置けた後に気づく方がましという判断
+def check_iframe_embeddable(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "mokumoku-bot/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=PEER_TIMEOUT) as res:
+            headers = res.headers
+    except urllib.error.HTTPError as e:
+        headers = e.headers
+    except Exception:
+        return True
+    if (headers.get("X-Frame-Options") or "").strip().lower() in ("deny", "sameorigin"):
+        return False
+    for directive in (headers.get("Content-Security-Policy") or "").split(";"):
+        parts = directive.strip().split()
+        if parts and parts[0].lower() == "frame-ancestors":
+            values = [v.lower() for v in parts[1:]]
+            if not values or values in (["'none'"], ["'self'"]):
+                return False
+    return True
 
 # サムネをキャッシュに載せる。versionに動画IDを入れておくと、差し替え時だけ取り直せる
 def refresh_youtube_thumbnail(area_id, video_id):
@@ -634,6 +665,12 @@ def get_world():
         if area.get("kind") == "calendar":
             areas.append({**common, "name": area.get("name") or DEFAULT_CALENDAR_NAME})
             continue
+        # ブラウザはサーバーが名前とURLを持つが、ページの中身には一切関与しない
+        # (iframeは参加者のブラウザが直接読む)。peerと違いURLをそのまま返す
+        if area.get("kind") == "browser":
+            areas.append({**common, "name": area.get("name") or urllib.parse.urlparse(area.get("url") or "").netloc,
+                          "url": area.get("url")})
+            continue
         cached = peer_cache.get(aid, {})
         areas.append({
             **common,
@@ -845,6 +882,20 @@ def admin_area():
             return jsonify({"error": "area limit reached"}), 400
         add_system_message(f"📅 管理者がカレンダー「{name}」を置きました")
         return jsonify({"ok": True, "area": result["area"]})
+    # ブラウザは任意ページなのでpeerと違いパス・クエリを許可する専用バリデータを使う。
+    # peerの分岐より前に置くこと(下の add はpeerのフォールバックなので、URL形式チェックが
+    # 厳しくなり種別も勝手にpeerへ書き換わってしまう)
+    if action == "add" and kind == "browser":
+        url = normalize_iframe_url(data.get("url"))
+        if not url:
+            return jsonify({"error": "invalid url"}), 400
+        name = " ".join((data.get("name") or "").split())[:40] or urllib.parse.urlparse(url).netloc
+        embeddable = check_iframe_embeddable(url)
+        result = add_area("browser", name, {"url": url})
+        if result.get("error") == "full":
+            return jsonify({"error": "area limit reached"}), 400
+        add_system_message(f"🌐 管理者がブラウザ「{name}」を置きました")
+        return jsonify({"ok": True, "area": result["area"], "embeddable": embeddable})
     if action == "add":
         url = normalize_peer_url(data.get("url"))
         if not url:
@@ -878,6 +929,8 @@ def admin_area():
             add_system_message(f"🕐 管理者が時計「{removed.get('name')}」を片付けました")
         elif removed and removed.get("kind") == "calendar":
             add_system_message(f"📅 管理者がカレンダー「{removed.get('name')}」を片付けました")
+        elif removed and removed.get("kind") == "browser":
+            add_system_message(f"🌐 管理者がブラウザ「{removed.get('name')}」を片付けました")
         elif removed:
             add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
         return jsonify({"ok": True})

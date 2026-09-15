@@ -211,6 +211,31 @@
     /* 「今日」だけ強調。既存の入室ボタンの緑(#2a7)を流用して新色を増やさない */
     .calendar-face .cal-day.today { background: #2a7; color: #fff; border-radius: 50%; }
 
+    /* ブラウザエリア。iframeが読み込まれるまでの一瞬だけ見える背景 */
+    .tile.browser { background: #cbd3d8; }
+    .tile.browser > img, .tile.browser > .room-overlay { display: none; }
+
+    .browser-frame { display: none; }
+    .tile.browser > .browser-frame {
+      display: block;
+      position: absolute;
+      inset: 0;
+      /* z-indexを明示しない: .tile-label(z-index:1)が既定で明示的スタッキングレベルを持つため、
+         こちらを無指定(auto)にしておけば横のDOM順に関係なく常にlabelが上に来る。
+         YouTubeのように再生中だけラベルを隠す特別扱いは不要 */
+    }
+    .browser-frame iframe {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+    /* 未拡大時はクリックをタイル本体(拡大操作)に通す。iframe自体にpointer-events:noneを
+       当てるだけで、中の埋め込み先が何をしていようと親のヒットテストには一切参加しなくなる。
+       拡大したときだけ操作可能にする */
+    .browser-frame iframe { pointer-events: none; }
+    .tile.focused.browser .browser-frame iframe { pointer-events: auto; }
+
     /* 正方形のマスに16:9を上下中央で収める。マス全体に広げるとYouTube側が黒帯を作り、
        コントロールバーが映像から離れて間延びして見える */
     .tile-player {
@@ -1154,12 +1179,17 @@
       // 日付が変わったときだけ丸ごと書き換える(calendarKeyで判定、renderCalendarTile参照)
       const calFace = document.createElement("div");
       calFace.className = "calendar-face";
-      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face, calFace);
+      // ブラウザエリア用。YouTubeのplayerと違い、エリアが割り当てられた瞬間(クリック不要)に
+      // iframeを作る。中身はrenderBrowserTile/resetTileがreplaceChildrenで出し入れする
+      const browserFrame = document.createElement("div");
+      browserFrame.className = "browser-frame";
+      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face, calFace, browserFrame);
       worldMapEl.appendChild(el);
       const tile = { el, img, overlay, label, status, player, playBtn, zoomBtn, face,
                      hands: { hour: face.querySelector(".hand.hour"), min: face.querySelector(".hand.min"),
                               sec: face.querySelector(".hand.sec") },
                      calendarFace: calFace, calendarKey: null,
+                     browserFrame, browserUrl: null,
                      cells: [...overlay.children], key: null, lastState: "", playing: false };
       // 再生状態はtile側に持つ。classListに持たせると、2秒ごとのrenderWorld()が
       // className を丸ごと書き換えるタイミングで消えてしまう
@@ -1293,6 +1323,8 @@
       tile.videoId = null;
       tile.areaName = null;
       tile.calendarKey = null;
+      tile.browserUrl = null;
+      tile.browserFrame.replaceChildren();
       stopTilePlayback(tile);
     }
 
@@ -1328,6 +1360,8 @@
           renderClockTile(tile, slot.area, focused, focus === null || focus === key);
         } else if (slot.area.kind === "calendar") {
           renderCalendarTile(tile, slot.area, focused);
+        } else if (slot.area.kind === "browser") {
+          renderBrowserTile(tile, slot.area, focused);
         } else if (slot.area.kind === "peer") {
           renderPeerTile(tile, slot.area, focused);
         } else {
@@ -1414,6 +1448,31 @@
         tile.calendarKey = key;
         tile.calendarFace.innerHTML = buildCalendarFaceHTML(today);
       }
+    }
+
+    // 管理者が置いた任意ページのiframe。YouTubeと違い▶待ちはせず、置かれた瞬間に全員の画面で
+    // 読み込まれる(OBSのブラウザソースと同じ「常時表示のアンビエントウィジェット」という位置づけ)
+    function renderBrowserTile(tile, area, focused) {
+      setClass(tile.el, `tile browser${focused}`);
+      tile.label.textContent = area.name;
+      tile.status.hidden = true;
+      tile.playBtn.hidden = tile.zoomBtn.hidden = true;
+      tile.browserFrame.setAttribute("aria-hidden", focused ? "false" : "true");
+      // URLが変わっていなければ触らない。ここを毎ポーリング(2秒毎)で作り直すと無限リロードになる
+      if (tile.browserUrl === area.url) return;
+      tile.browserUrl = area.url;
+      const iframe = document.createElement("iframe");
+      iframe.src = area.url;
+      iframe.title = area.name;
+      iframe.referrerPolicy = "no-referrer";
+      // allow-scripts+allow-same-originの組み合わせは「同一オリジンをsandbox化した場合」だけ
+      // sandbox回避に使われる既知の抜け穴になる。ここは通常他ドメインのiframeなので安全な組み合わせだが、
+      // 管理者が自分自身のもくもくサーバーのURLを指定した場合はこの前提が崩れ、埋め込んだページから
+      // 親ウィンドウのlocalStorage(管理者合言葉を含む)を読めてしまいうる。ただしこれは管理者本人が
+      // 自分のURLを自分に埋め込む自傷的なケースに限られ、第三者による権限昇格経路にはならない。
+      // allow-top-navigation系は意図的に与えない(タブごと乗っ取る遷移を防ぐ)
+      iframe.sandbox = "allow-scripts allow-same-origin allow-forms allow-popups";
+      tile.browserFrame.replaceChildren(iframe);
     }
 
     // つながった相手のもくもくルーム。中身は自分のルームと同じ9部屋なので renderRoomInto を使い回す
@@ -1850,7 +1909,7 @@
     }
 
     const AREA_ERRORS = {
-      "invalid url": "URLの形式が正しくありません(https://ホスト名 の形で入力してください)",
+      "invalid url": "URLの形式が正しくありません(https://から始まる有効なURLを入力してください)",
       "invalid video": "YouTubeの動画URLとして読み取れませんでした",
       "video unavailable": "その動画の情報を取得できませんでした(限定公開・削除済みかもしれません)",
       "already connected": "そのルームとは既につながっています",
@@ -1920,6 +1979,13 @@
         nameHint: "表示名 (任意/未指定なら「カレンダー」)", missingUrl: "",
         title: () => "見ている人の手元の日付を表示します",
         text: a => `📅 ${a.name}`,
+      },
+      browser: {
+        label: "ブラウザ", needsUrl: true, addLabel: "置く", delLabel: "片付ける",
+        confirm: "このブラウザを片付けますか？", urlHint: "表示したいページのURL",
+        nameHint: "表示名 (任意/未指定ならホスト名)", missingUrl: "表示したいページのURLを入力してください",
+        title: a => a.url || "",
+        text: a => `🌐 ${a.name}`,
       },
     };
 
@@ -2018,9 +2084,12 @@
         });
         const data = await res.json();
         if (!res.ok) { alert(AREA_ERRORS[data.error] || "操作に失敗しました"); return; }
-        // サムネは取れたがoEmbedが拒否した動画。多くは埋め込み禁止で、マスには置けても再生できない
+        // サムネは取れたがoEmbedが拒否した動画、またはX-Frame-Options/CSPが拒否と分かったページ。
+        // 多くは埋め込み禁止で、マスには置けても表示・再生できない
         if (data.embeddable === false) {
-          alert("この動画は外部サイトへの埋め込みが許可されていない可能性があります。\nマスには置きましたが、参加者の画面で再生できないかもしれません。");
+          alert(body.kind === "browser"
+            ? "このページは外部サイトへの埋め込みを許可していない可能性があります。\nマスには置きましたが、参加者の画面では表示できないかもしれません。"
+            : "この動画は外部サイトへの埋め込みが許可されていない可能性があります。\nマスには置きましたが、参加者の画面で再生できないかもしれません。");
         }
       } catch {
         alert("操作に失敗しました");
