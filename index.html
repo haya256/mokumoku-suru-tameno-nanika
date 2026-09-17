@@ -166,6 +166,24 @@
       .clock-face .hand.sec { visibility: hidden; }
     }
 
+    /* 時計NPC: 上の時計エリアと同じ.clock-face/CLOCK_FACE_SVGを再利用し、部屋の1マス(.cell)に
+       小さく出す。.tile.focused .clock-face .numeral という既存の数字表示トグルは.tileとの
+       祖先子孫関係だけを見ているのでここでも無改修で効く。上書きが要るのは「既定で非表示」と
+       「タイル全体基準の絶対配置・大きさ」の2点だけ(.tile.clock > .clock-face の
+       pointer-events:none は子コンビネータ限定で部屋タイルにはそもそもマッチしない) */
+    .cell .clock-face {
+      display: block;
+      position: static;
+      inset: auto;
+      width: 60%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+      pointer-events: auto;
+    }
+
+    /* 拡大時は.tile.focused .cell .chara/.calendar-faceと対になる形で幅を広げる */
+    .tile.focused .cell .clock-face { width: 90%; cursor: pointer; }
+
     /* カレンダーエリア。時計(#8f9a91、寒色寄り)と隣り合っても種別の違いが色でも分かるよう、
        同じ低彩度でも暖色寄り(紙のような色)にずらす */
     .tile.calendar { background: #a08f7c; }
@@ -577,6 +595,11 @@
     #charaStatusText .calendar-face .cal-month { font-size: 1rem; margin-bottom: 6px; }
     #charaStatusText .calendar-face .cal-grid { font-size: 0.95rem; gap: 4px; }
     #charaStatusText .calendar-face .cal-weekday { opacity: 0.8; }
+
+    /* 時計NPCのステータスウィンドウ内表示。数字は.tile.focusedという祖先が無いと出ないので、
+       ここでは常時表示に上書きする */
+    #charaStatusText .clock-face { display: block; width: 140px; margin: 0 auto; }
+    #charaStatusText .clock-face .numeral { display: block; }
 
     #charaStatusCloseBtn {
       display: block;
@@ -1312,6 +1335,9 @@
                               sec: face.querySelector(".hand.sec") },
                      calendarFace: calFace, calendarKey: null,
                      browserFrame, browserUrl: null,
+                     // 部屋セル内の時計NPCの針(occupant id -> {hour,min,sec})。renderRoomIntoが
+                     // セルを作り直すたびに詰め直し、見えている間は毎pollここを見て位相ズレを直す
+                     roomClockHands: new Map(),
                      cells: [...overlay.children], key: null, lastState: "", playing: false };
       // 再生状態はtile側に持つ。classListに持たせると、2秒ごとのrenderWorld()が
       // className を丸ごと書き換えるタイミングで消えてしまう
@@ -1354,7 +1380,9 @@
     // 1部屋ぶんの中身(キャラと名前バッジ)を描く。自分のルームにもピアのルームにも使う。
     // charaUrl はカスタム画像のURLを組み立てる関数(自分とピアで参照先が変わる)。
     // roomLabel はステータスウィンドウでの表示用(自分ならnull、ピアなら相手ルーム名)
-    function renderRoomInto(tile, entries, charaUrl, roomLabel) {
+    // visible はこのタイルが今画面に見えているか(renderClockTileと同じ意味・同じ値)。
+    // 時計NPCの位相合わせは下部でfingerprintの変化と無関係に毎回チェックするため必要
+    function renderRoomInto(tile, entries, charaUrl, roomLabel, visible) {
       // ポーズ(0〜2)は入室時にサーバーが決めて退室まで固定。ピア由来の値は信用せず範囲に丸める。
       // npc/kindはNPC機能由来のフィールドで、実参加者やkind未指定のNPCはbasic扱いにフォールバックする
       const occupants = (entries || []).map(e => ({
@@ -1363,52 +1391,64 @@
         pose: Math.min(2, Math.max(0, Math.trunc(e.pose) || 0)), imgv: e.imgv || 0,
         npc: !!e.npc, kind: e.kind || "basic",
       }));
-      // 変化がなければDOMを触らない(作り直すとCSSアニメーションがリセットされるため)。
-      // カレンダーNPCが1体でもいる場合は、他の入退室が無くても日付が変わったら再描画したいので
-      // フィンガープリントに今日の日付キーを足す
+      // 変化があればDOMを作り直す(作り直すとCSSアニメーションがリセットされるので、変化が
+      // 無ければ触らない)。カレンダーNPCが1体でもいる場合は、他の入退室が無くても日付が
+      // 変わったら再描画したいのでフィンガープリントに今日の日付キーを足す
       const hasCalendarNpc = occupants.some(o => o.kind === "calendar");
       const state = JSON.stringify({ occupants, today: hasCalendarNpc ? calendarDateKey(new Date()) : null });
-      if (state === tile.lastState) return;
-      tile.lastState = state;
-      tile.cells.forEach(cell => cell.innerHTML = "");
-      occupants.forEach(o => {
-        const cell = tile.cells[o.room - 1];
-        if (!cell) return;
-        if (o.kind === "calendar") {
-          renderCalendarNpcCell(cell, o, tile, roomLabel);
-          return;
-        }
-        const chara = document.createElement("div");
-        chara.className = "chara";
-        // ステータスウィンドウの肖像に同じクロップをそのまま使い回すための情報(再計算しない)
-        let portrait;
-        if (o.imgv) {
-          // アップロードされたカスタム画像(imgvはキャッシュバスター兼差分検知用)
-          chara.classList.add("custom");
-          const url = charaUrl(o);
-          chara.style.backgroundImage = `url(${url})`;
-          portrait = { custom: true, url };
-        } else {
-          const col = ((o.room - 1) % 3) * 3 + o.pose;
-          const row = Math.floor((o.room - 1) / 3) * 2;
-          const position = `${col / 8 * 100}% ${row / 5 * 100}%`;
-          chara.style.backgroundPosition = position;
-          portrait = { custom: false, position };
-        }
-        chara.style.animationDelay = `${(o.room * 0.3) % 2}s`;
-        chara.addEventListener("click", e => {
-          // 縮小表示中は何もしない。タイル全体クリック(ズーム用)にそのまま委ねる
-          if (!tile.el.classList.contains("focused")) return;
-          e.stopPropagation();
-          openCharaStatus(o, portrait, roomLabel);
+      if (state !== tile.lastState) {
+        tile.lastState = state;
+        tile.cells.forEach(cell => cell.innerHTML = "");
+        tile.roomClockHands.clear();
+        occupants.forEach(o => {
+          const cell = tile.cells[o.room - 1];
+          if (!cell) return;
+          if (o.kind === "calendar") {
+            renderCalendarNpcCell(cell, o, tile, roomLabel);
+            return;
+          }
+          if (o.kind === "clock") {
+            renderClockNpcCell(cell, o, tile, roomLabel);
+            return;
+          }
+          const chara = document.createElement("div");
+          chara.className = "chara";
+          // ステータスウィンドウの肖像に同じクロップをそのまま使い回すための情報(再計算しない)
+          let portrait;
+          if (o.imgv) {
+            // アップロードされたカスタム画像(imgvはキャッシュバスター兼差分検知用)
+            chara.classList.add("custom");
+            const url = charaUrl(o);
+            chara.style.backgroundImage = `url(${url})`;
+            portrait = { custom: true, url };
+          } else {
+            const col = ((o.room - 1) % 3) * 3 + o.pose;
+            const row = Math.floor((o.room - 1) / 3) * 2;
+            const position = `${col / 8 * 100}% ${row / 5 * 100}%`;
+            chara.style.backgroundPosition = position;
+            portrait = { custom: false, position };
+          }
+          chara.style.animationDelay = `${(o.room * 0.3) % 2}s`;
+          chara.addEventListener("click", e => {
+            // 縮小表示中は何もしない。タイル全体クリック(ズーム用)にそのまま委ねる
+            if (!tile.el.classList.contains("focused")) return;
+            e.stopPropagation();
+            openCharaStatus(o, portrait, roomLabel);
+          });
+          cell.appendChild(chara);
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = o.name;
+          badge.title = o.task;
+          cell.appendChild(badge);
         });
-        cell.appendChild(chara);
-        const badge = document.createElement("span");
-        badge.className = "badge";
-        badge.textContent = o.name;
-        badge.title = o.task;
-        cell.appendChild(badge);
-      });
+      }
+      // 時計NPCの位相合わせ。時計エリア(renderClockTile)と同じ理由で、見えている間は
+      // fingerprintが変わらなくても毎pollチェックする(非表示中に直しても無駄なうえ、
+      // 表示された瞬間にCSSアニメーションが作り直した時刻で復活するため)
+      if (visible) {
+        tile.roomClockHands.forEach(hands => { if (clockNeedsSync(hands)) syncClockHands(hands); });
+      }
     }
 
     // カレンダーNPC専用のセル中身。通常のキャラスプライトの代わりにワールドマップのカレンダー
@@ -1418,6 +1458,29 @@
       const face = document.createElement("div");
       face.className = "calendar-face";
       face.innerHTML = buildCalendarFaceHTML(new Date());
+      face.addEventListener("click", e => {
+        if (!tile.el.classList.contains("focused")) return;
+        e.stopPropagation();
+        openCharaStatus(o, null, roomLabel);
+      });
+      cell.appendChild(face);
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = o.name;
+      cell.appendChild(badge);
+    }
+
+    // 時計NPC専用のセル中身。ワールドマップの時計エリアと同じCLOCK_FACE_SVGを小さく置く。
+    // 針はCSSアニメーションで回るので、ここでは初期位相を合わせてtile.roomClockHandsに登録するだけ
+    // (以降の位相ズレの再チェックはrenderRoomInto末尾がvisible時に毎poll行う)
+    function renderClockNpcCell(cell, o, tile, roomLabel) {
+      const face = document.createElement("div");
+      face.className = "clock-face";
+      face.innerHTML = CLOCK_FACE_SVG;
+      const hands = { hour: face.querySelector(".hand.hour"), min: face.querySelector(".hand.min"),
+                      sec: face.querySelector(".hand.sec") };
+      syncClockHands(hands);
+      tile.roomClockHands.set(o.id, hands);
       face.addEventListener("click", e => {
         if (!tile.el.classList.contains("focused")) return;
         e.stopPropagation();
@@ -1481,6 +1544,26 @@
           face.className = "calendar-face";
           face.innerHTML = buildCalendarGrid(today.getFullYear(), today.getMonth(), today);
           container.appendChild(face);
+        },
+      },
+      // ワールドマップの時計エリアと同じ文字盤を表示する。モーダルは開くたびに新しくSVGを作って
+      // 一度だけ位相を合わせれば十分(継続的な再同期チェックは部屋セル内表示側だけで行う)
+      clock: {
+        render(container, o, roomLabel) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const l = document.createElement("span"); l.className = "label"; l.textContent = "ルーム";
+          const v = document.createElement("span"); v.className = "value";
+          v.textContent = roomLabel ? `${roomLabel} #${o.room}` : `Room ${o.room}`;
+          row.append(l, v);
+          container.appendChild(row);
+
+          const face = document.createElement("div");
+          face.className = "clock-face";
+          face.innerHTML = CLOCK_FACE_SVG;
+          container.appendChild(face);
+          syncClockHands({ hour: face.querySelector(".hand.hour"), min: face.querySelector(".hand.min"),
+                            sec: face.querySelector(".hand.sec") });
         },
       },
     };
@@ -1582,26 +1665,27 @@
         // 同じマスが別のエリアに変わったときも、前のエリアの残骸を持ち越さない
         if (tile.key !== key) { resetTile(tile); tile.key = key; }
         const focused = focus === key ? " focused" : "";
+        // 拡大表示中は他のマスがdisplay:noneになり、CSSアニメーションが破棄される。
+        // 見えていないマスの針を合わせても無駄(表示された瞬間にその時刻で復活してしまう)なので、
+        // 実際に見えているかどうかを時計エリアにも部屋セル内の時計NPCにも渡す
+        const visible = focus === null || focus === key;
         if (slot.self) {
           if (tile.img.getAttribute("src") !== selfRoomImageSrc) tile.img.src = selfRoomImageSrc;
           setClass(tile.el, `tile self${focused}`);
           tile.label.textContent = "このルーム";
           tile.status.hidden = true;
           tile.playBtn.hidden = tile.zoomBtn.hidden = true;
-          renderRoomInto(tile, lastEntries, selfCharaUrl, null);
+          renderRoomInto(tile, lastEntries, selfCharaUrl, null, visible);
         } else if (slot.area.kind === "youtube") {
           renderYouTubeTile(tile, slot.area, focused);
         } else if (slot.area.kind === "clock") {
-          // 拡大表示中は他のマスがdisplay:noneになり、CSSアニメーションが破棄される。
-          // 見えていないマスの針を合わせても無駄(表示された瞬間にその時刻で復活してしまう)なので、
-          // 実際に見えているかどうかを渡す
-          renderClockTile(tile, slot.area, focused, focus === null || focus === key);
+          renderClockTile(tile, slot.area, focused, visible);
         } else if (slot.area.kind === "calendar") {
           renderCalendarTile(tile, slot.area, focused);
         } else if (slot.area.kind === "browser") {
           renderBrowserTile(tile, slot.area, focused);
         } else if (slot.area.kind === "peer") {
-          renderPeerTile(tile, slot.area, focused);
+          renderPeerTile(tile, slot.area, focused, visible);
         } else {
           // 知らない種別(設定を手で編集した場合など)。霧のマスにして何も壊さない
           resetTile(tile);
@@ -1623,7 +1707,7 @@
       // 隠れている間は触らない。display:none はCSSアニメーションを破棄するので、ここで位相を
       // 書いても見えた瞬間に「書いた時刻」のまま復活して、ずれた時計が動き続けることになる。
       // 見えたときに「いま針が指している時刻」を確かめて、違っていれば直す
-      if (visible && clockNeedsSync(tile)) syncClockHands(tile);
+      if (visible && clockNeedsSync(tile.hands)) syncClockHands(tile.hands);
     }
 
     // 針が指している時刻と実時刻のずれをこれ以上許さない値(秒)。チクタクの1目盛りより小さくとる
@@ -1651,8 +1735,8 @@
     // アニメーションだけが止まった場合を取りこぼす。針が指している位置を直接読めば
     // 原因によらず検出でき、何かの拍子にずれても次の描画で自力で直る。
     // プロパティを読むだけなのでスタイルの再計算は走らない
-    function clockNeedsSync(tile) {
-      const shown = shownPhase(tile.hands.sec, 60);
+    function clockNeedsSync(hands) {
+      const shown = shownPhase(hands.sec, 60);
       if (shown === null) return true;
       const diff = Math.abs(shown - clockPhases().sec);
       return Math.min(diff, 60 - diff) > CLOCK_TOLERANCE_SEC;
@@ -1664,9 +1748,9 @@
     // 描かれる位置は currentTime - delay なので、delay をその差に置けば狙った位相になる。
     // まだアニメーションが無いときは経過0とみなす(= 負のdelayが初期位相になる)。
     // キャラの揺れ(bob)を animationDelay でずらしているのと同じ仕組み
-    function syncClockHands(tile) {
+    function syncClockHands(hands) {
       for (const [name, phase] of Object.entries(clockPhases())) {
-        const hand = tile.hands[name];
+        const hand = hands[name];
         const anim = hand.getAnimations()[0];
         const currentTime = anim && anim.currentTime !== null ? anim.currentTime : 0;
         hand.style.animationDelay = `${(currentTime - phase * 1000) / 1000}s`;
@@ -1714,14 +1798,14 @@
     }
 
     // つながった相手のもくもくルーム。中身は自分のルームと同じ9部屋なので renderRoomInto を使い回す
-    function renderPeerTile(tile, area, focused) {
+    function renderPeerTile(tile, area, focused, visible) {
       setTileImage(tile, area, area.roomImageVersion);
       setClass(tile.el, `tile peer${area.ok === false ? " offline" : ""}${focused}`);
       tile.label.textContent = area.ok === true ? `${area.name} (${(area.board || []).length}人)` : area.name;
       tile.status.hidden = area.ok === true;
       tile.status.textContent = PEER_STATUS[area.ok] || "";
       tile.playBtn.hidden = tile.zoomBtn.hidden = true;
-      renderRoomInto(tile, area.board, peerCharaUrl(area.id), area.name);
+      renderRoomInto(tile, area.board, peerCharaUrl(area.id), area.name, visible);
     }
 
     // 管理者が置いた動画1本のマス。再生前はサムネと▶だけで、iframeはまだ存在しない
@@ -2352,6 +2436,11 @@
         label: "カレンダー", addLabel: "入室させる", delLabel: "片付ける",
         confirm: "このカレンダーNPCを片付けますか？",
         needsTask: false, needsImage: false, nameHint: "表示名 (任意/未指定なら「カレンダー」)",
+      },
+      clock: {
+        label: "時計", addLabel: "入室させる", delLabel: "片付ける",
+        confirm: "この時計NPCを片付けますか？",
+        needsTask: false, needsImage: false, nameHint: "表示名 (任意/未指定なら「時計」)",
       },
     };
 
