@@ -184,6 +184,50 @@
     /* 拡大時は.tile.focused .cell .chara/.calendar-faceと対になる形で幅を広げる */
     .tile.focused .cell .clock-face { width: 90%; cursor: pointer; }
 
+    /* YouTube NPC: 部屋のマスには静的なサムネイルを置き、拡大時だけ現れる▶ボタンを押すと
+       その場でiframeを埋め込んで再生する(ワールドマップのYouTubeエリアと同じ「押すまで
+       再生しない」原則)。ステータスウィンドウでも同じ動画を確認できる */
+    .cell .npc-youtube-thumb {
+      position: relative;
+      width: 70%;
+      aspect-ratio: 16 / 9;
+      background-color: #111;
+      background-size: cover;
+      background-position: center;
+      border: 1px solid #000;
+      border-radius: 4px;
+    }
+    .tile.focused .cell .npc-youtube-thumb { width: 92%; cursor: pointer; }
+
+    /* ▶ボタンは未拡大では小さすぎて押せないので、拡大したマスだけで出す(.cell .badgeと同じ流儀) */
+    .cell .npc-youtube-play { display: none; }
+    .tile.focused .cell .npc-youtube-play {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    /* 再生中のセル。buildYouTubeEmbed()の.yt-embed(チャット用の余白/最大幅)を打ち消して
+       セルいっぱいに広げる */
+    .cell .npc-youtube-playing {
+      position: relative;
+      width: 92%;
+      aspect-ratio: 16 / 9;
+      background: #111;
+    }
+    .cell .npc-youtube-playing .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
+
     /* カレンダーエリア。時計(#8f9a91、寒色寄り)と隣り合っても種別の違いが色でも分かるよう、
        同じ低彩度でも暖色寄り(紙のような色)にずらす */
     .tile.calendar { background: #a08f7c; }
@@ -600,6 +644,32 @@
        ここでは常時表示に上書きする */
     #charaStatusText .clock-face { display: block; width: 140px; margin: 0 auto; }
     #charaStatusText .clock-face .numeral { display: block; }
+
+    /* YouTube NPCのステータスウィンドウ内再生ステージ。押すまではサムネ+▶、
+       押すとbuildYouTubeEmbed()の.yt-embedに差し替わる(チャット用の余白/最大幅は
+       ステージ内では打ち消してぴったり収める) */
+    #charaStatusText .status-yt-stage {
+      position: relative;
+      width: 100%;
+      max-width: 360px;
+      aspect-ratio: 16 / 9;
+      background: #111;
+    }
+    #charaStatusText .status-yt-stage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #charaStatusText .status-yt-stage .status-yt-play {
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      font-size: 1.4rem;
+      cursor: pointer;
+    }
+    #charaStatusText .status-yt-stage .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
 
     #charaStatusCloseBtn {
       display: block;
@@ -1338,6 +1408,9 @@
                      // 部屋セル内の時計NPCの針(occupant id -> {hour,min,sec})。renderRoomIntoが
                      // セルを作り直すたびに詰め直し、見えている間は毎pollここを見て位相ズレを直す
                      roomClockHands: new Map(),
+                     // 部屋セル内で再生中のYouTube NPC(あれば)のid/表示名。tile.playing(エリア用)とは
+                     // 別に持つ(1つのtileが同時に両方を再生することはない設計だが、意味が違うので分ける)
+                     playingNpcId: null, playingNpcName: null,
                      cells: [...overlay.children], key: null, lastState: "", playing: false };
       // 再生状態はtile側に持つ。classListに持たせると、2秒ごとのrenderWorld()が
       // className を丸ごと書き換えるタイミングで消えてしまう
@@ -1389,26 +1462,48 @@
         id: String(e.id ?? ""), room: e.room, name: String(e.name ?? ""), task: String(e.task ?? ""),
         start: String(e.start ?? ""), end: String(e.end ?? ""),
         pose: Math.min(2, Math.max(0, Math.trunc(e.pose) || 0)), imgv: e.imgv || 0,
-        npc: !!e.npc, kind: e.kind || "basic",
+        npc: !!e.npc, kind: e.kind || "basic", videoId: String(e.videoId ?? ""),
       }));
+      // 再生中のYouTube NPCが退室していたら再生状態を破棄する(次のポーリングで気づく)
+      if (tile.playingNpcId && !occupants.some(o => o.id === tile.playingNpcId)) {
+        tile.playingNpcId = null;
+        tile.playingNpcName = null;
+      }
       // 変化があればDOMを作り直す(作り直すとCSSアニメーションがリセットされるので、変化が
       // 無ければ触らない)。カレンダーNPCが1体でもいる場合は、他の入退室が無くても日付が
-      // 変わったら再描画したいのでフィンガープリントに今日の日付キーを足す
+      // 変わったら再描画したいのでフィンガープリントに今日の日付キーを足す。再生中のNPCも
+      // フィンガープリントに含め、再生開始/停止の切り替わりを確実に1回は反映させる
       const hasCalendarNpc = occupants.some(o => o.kind === "calendar");
-      const state = JSON.stringify({ occupants, today: hasCalendarNpc ? calendarDateKey(new Date()) : null });
+      const state = JSON.stringify({
+        occupants, today: hasCalendarNpc ? calendarDateKey(new Date()) : null, playing: tile.playingNpcId,
+      });
       if (state !== tile.lastState) {
         tile.lastState = state;
-        tile.cells.forEach(cell => cell.innerHTML = "");
+        // 再生中のYouTube NPCが入っているセルは、他の入退室で作り直すと再生が途切れて
+        // しまうので触らない。ただし「DOMに.npc-youtube-playingがある」だけでは、そのNPCが
+        // 片付けられた後も(tile.playingNpcIdは上でnullに戻っているのに)古いiframeを
+        // 温存し続けてしまう(退室後も再生が止まらないバグの原因だった)。
+        // 今のoccupantsと照らして「まだそのマスに居る、かつ今も再生対象である」ときだけ温存する
+        const stillPlayingRoom = occupants.find(o => o.id === tile.playingNpcId)?.room;
+        tile.cells.forEach((cell, i) => {
+          if (i + 1 === stillPlayingRoom && cell.querySelector(".npc-youtube-playing")) return;
+          cell.innerHTML = "";
+        });
         tile.roomClockHands.clear();
         occupants.forEach(o => {
           const cell = tile.cells[o.room - 1];
           if (!cell) return;
+          if (o.room === stillPlayingRoom && o.id === tile.playingNpcId && cell.querySelector(".npc-youtube-playing")) return;
           if (o.kind === "calendar") {
             renderCalendarNpcCell(cell, o, tile, roomLabel);
             return;
           }
           if (o.kind === "clock") {
             renderClockNpcCell(cell, o, tile, roomLabel);
+            return;
+          }
+          if (o.kind === "youtube") {
+            renderYoutubeNpcCell(cell, o, tile, roomLabel);
             return;
           }
           const chara = document.createElement("div");
@@ -1493,12 +1588,57 @@
       cell.appendChild(badge);
     }
 
+    // YouTube NPC専用のセル中身。再生中(tile.playingNpcIdと一致)ならライブ埋め込みを、
+    // そうでなければサムネ+▶(拡大時のみ)を出す。サムネ本体のクリックはステータスウィンドウを開く
+    function renderYoutubeNpcCell(cell, o, tile, roomLabel) {
+      if (o.id === tile.playingNpcId) {
+        const wrap = document.createElement("div");
+        wrap.className = "npc-youtube-playing";
+        wrap.appendChild(buildYouTubeEmbed(o.videoId, { autoplay: true }));
+        cell.appendChild(wrap);
+        const badge = document.createElement("span");
+        badge.className = "badge";
+        badge.textContent = o.name;
+        cell.appendChild(badge);
+        return;
+      }
+      const thumb = document.createElement("div");
+      thumb.className = "npc-youtube-thumb";
+      thumb.style.backgroundImage = `url(${npcImageUrl(o)})`;
+      thumb.addEventListener("click", e => {
+        if (!tile.el.classList.contains("focused")) return;
+        e.stopPropagation();
+        openCharaStatus(o, null, roomLabel);
+      });
+      const playBtn = document.createElement("button");
+      playBtn.type = "button";
+      playBtn.className = "npc-youtube-play";
+      playBtn.title = "再生";
+      playBtn.textContent = "▶";
+      // display:noneで隠れている間(未拡大時)はクリックが発生しえないので、
+      // ここでfocused判定をやり直す必要はない
+      playBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        startRoomNpcPlayback(tile, o);
+      });
+      thumb.appendChild(playBtn);
+      cell.appendChild(thumb);
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = o.name;
+      cell.appendChild(badge);
+    }
+
     function selfCharaUrl(o) {
       return `/chara-custom/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
     }
 
     function peerCharaUrl(peerId) {
       return o => `/peer-chara/${encodeURIComponent(peerId)}/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
+    }
+
+    function npcImageUrl(o) {
+      return `/npc-image/${encodeURIComponent(o.id)}?v=${encodeURIComponent(o.videoId || 0)}`;
     }
 
     const charaStatusOverlay = document.getElementById("charaStatusOverlay");
@@ -1566,6 +1706,37 @@
                             sec: face.querySelector(".hand.sec") });
         },
       },
+      // YouTubeエリアと同じく「押すまで通信・再生しない」原則。押したときだけbuildYouTubeEmbedで
+      // iframeを差し込む。他で再生中のタイルがあれば止める(同時に鳴らせるのは1つだけ)
+      youtube: {
+        render(container, o, roomLabel) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const l = document.createElement("span"); l.className = "label"; l.textContent = "ルーム";
+          const v = document.createElement("span"); v.className = "value";
+          v.textContent = roomLabel ? `${roomLabel} #${o.room}` : `Room ${o.room}`;
+          row.append(l, v);
+          container.appendChild(row);
+
+          const stage = document.createElement("div");
+          stage.className = "status-yt-stage";
+          const thumbImg = document.createElement("img");
+          thumbImg.src = npcImageUrl(o);
+          thumbImg.alt = "";
+          const playBtn = document.createElement("button");
+          playBtn.type = "button";
+          playBtn.className = "status-yt-play";
+          playBtn.textContent = "▶";
+          playBtn.addEventListener("click", () => {
+            stopAllPlayback();
+            renderWorld(); // stopTilePlayback/stopRoomNpcPlayback自体は状態を倒すだけで見た目
+                            // (▶やラベル)は次のrenderWorld()まで変わらないので、ここで即座に反映させる
+            stage.replaceChildren(buildYouTubeEmbed(o.videoId, { autoplay: true }));
+          });
+          stage.append(thumbImg, playBtn);
+          container.appendChild(stage);
+        },
+      },
     };
 
     function openCharaStatus(o, portrait, roomLabel) {
@@ -1584,6 +1755,9 @@
 
     function closeCharaStatus() {
       charaStatusOverlay.hidden = true;
+      // hiddenだけではYouTube NPCのiframeの音が止まらないので中身ごと破棄する
+      // (stopTilePlaybackがreplaceChildren()で確実に取り除いているのと同じ理由)
+      charaStatusText.innerHTML = "";
     }
 
     charaStatusCloseBtn.addEventListener("click", closeCharaStatus);
@@ -1822,11 +1996,17 @@
       tile.areaName = area.name;
     }
 
-    // 再生中のエリアは同時に1つだけにする。複数が同時に鳴ると音が混ざるうえ、
+    // 再生中の動画は同時に1つだけにする(エリアのタイル・部屋セル内のYouTube NPC・
+    // ステータスウィンドウの再生ステージすべてを合わせて)。複数が同時に鳴ると音が混ざるうえ、
     // 拡大表示中は他のマスが隠れるので、どれを止めればいいのか分からなくなる
+    function stopAllPlayback() {
+      tiles.forEach(stopTilePlayback);
+      tiles.forEach(stopRoomNpcPlayback);
+    }
+
     function startTilePlayback(tile) {
       if (!tile.videoId) return;
-      tiles.forEach(t => { if (t !== tile) stopTilePlayback(t); });
+      stopAllPlayback();
       tile.playing = true;
       tile.player.hidden = false;
       tile.player.replaceChildren(buildYouTubeEmbed(tile.videoId, { autoplay: true }));
@@ -1847,6 +2027,26 @@
       tile.player.replaceChildren();
     }
 
+    // 部屋セル内のYouTube NPC再生を開始する。▶ボタンは拡大時にしか表示されない
+    // (=ステータスウィンドウのオーバーレイがマップ全体を覆っている間は押せない)ので、
+    // モーダル側の再生を止める必要はここには無い(モーダル側のstopAllPlayback呼び出しでカバー済み)
+    function startRoomNpcPlayback(tile, o) {
+      stopAllPlayback();
+      tile.playingNpcId = o.id;
+      tile.playingNpcName = o.name;
+      renderWorld();
+    }
+
+    // stopTilePlaybackと同じ理由でiframeは即座に取り除く。renderWorld()は呼び出し元に任せる
+    // (stopAllPlaybackから複数回呼ばれても再描画は1回で済むように)
+    function stopRoomNpcPlayback(tile) {
+      if (!tile.playingNpcId) return;
+      tile.playingNpcId = null;
+      tile.playingNpcName = null;
+      const cell = tile.cells.find(c => c.querySelector(".npc-youtube-playing"));
+      if (cell) cell.innerHTML = "";
+    }
+
     function toggleTileFocus(tile) {
       focusedKey = focusedKey === tile.key ? null : tile.key;
       renderWorld();
@@ -1855,10 +2055,12 @@
     // 拡大表示中は再生中のマスがCSSで隠れる(音は鳴り続ける)ので、どこを見ていても
     // 止められる手綱をマップ上に常設する
     function renderNowPlaying() {
-      const playing = tiles.find(t => t.playing);
+      const playingArea = tiles.find(t => t.playing);
+      const playingRoom = tiles.find(t => t.playingNpcId);
+      const playing = playingArea || playingRoom;
       nowPlayingBar.hidden = !playing;
       if (!playing) return;
-      nowPlayingLabel.textContent = `▶ ${playing.areaName || "YouTube"}`;
+      nowPlayingLabel.textContent = `▶ ${playingArea ? (playingArea.areaName || "YouTube") : playingRoom.playingNpcName}`;
       nowPlayingGoBtn.hidden = focusedKey === playing.key;
       nowPlayingBar.dataset.key = playing.key;
     }
@@ -1923,12 +2125,12 @@
     });
 
     nowPlayingStopBtn.addEventListener("click", () => {
-      tiles.forEach(stopTilePlayback);
+      stopAllPlayback();
       renderWorld();
     });
 
     nowPlayingGoBtn.addEventListener("click", () => {
-      const playing = tiles.find(t => t.playing);
+      const playing = tiles.find(t => t.playing) || tiles.find(t => t.playingNpcId);
       if (playing) { focusedKey = playing.key; renderWorld(); }
     });
 
@@ -2442,6 +2644,12 @@
         confirm: "この時計NPCを片付けますか？",
         needsTask: false, needsImage: false, nameHint: "表示名 (任意/未指定なら「時計」)",
       },
+      youtube: {
+        label: "YouTube", addLabel: "入室させる", delLabel: "片付ける",
+        confirm: "このYouTube NPCを片付けますか？",
+        needsTask: false, needsImage: false, needsUrl: true,
+        nameHint: "表示名 (任意/未指定なら動画タイトル)", urlHint: "YouTubeの動画URL",
+      },
     };
 
     const NPC_ERRORS = {
@@ -2450,6 +2658,8 @@
       "invalid kind": "不明な種別です",
       "not found": "そのNPCは見つかりませんでした",
       "admin required": "管理者合言葉が必要です",
+      "invalid video": "YouTubeの動画URLとして読み取れませんでした",
+      "video unavailable": "その動画の情報を取得できませんでした(限定公開・削除済みかもしれません)",
     };
 
     // NPCは実参加者と同じboardに乗っているので、追加フェッチせず既にpoll済みのlastEntriesから拾う
@@ -2498,6 +2708,8 @@
       const taskInput = document.createElement("input");
       taskInput.type = "text";
       taskInput.placeholder = "やること・セリフ";
+      const urlInput = document.createElement("input");
+      urlInput.type = "text";
       const imageInput = document.createElement("input");
       imageInput.type = "file";
       imageInput.accept = "image/*";
@@ -2508,6 +2720,8 @@
         nameInput.placeholder = spec.nameHint;
         taskInput.hidden = !spec.needsTask;
         imageInput.hidden = !spec.needsImage;
+        urlInput.hidden = !spec.needsUrl;
+        urlInput.placeholder = spec.urlHint || "";
         addBtn.textContent = spec.addLabel;
       };
       kindSelect.addEventListener("change", syncKind);
@@ -2516,21 +2730,23 @@
         const spec = NPC_KINDS[kindSelect.value];
         const name = nameInput.value.trim();
         const task = taskInput.value.trim();
+        const url = urlInput.value.trim();
         if (spec.needsTask && (!name || !task)) { alert("名前とやることを入力してください"); return; }
+        if (spec.needsUrl && !url) { alert("YouTubeの動画URLを入力してください"); return; }
         let image = null;
         if (spec.needsImage && imageInput.files[0]) {
           try { image = await fileToDataUrl(imageInput.files[0]); }
           catch { alert("画像として読み込めませんでした"); return; }
         }
-        changeNpc({ action: "add", kind: kindSelect.value, name, task, ...(image && { image }) });
+        changeNpc({ action: "add", kind: kindSelect.value, name, task, url, ...(image && { image }) });
       };
-      [nameInput, taskInput].forEach(el => el.addEventListener("keydown", e => {
+      [nameInput, taskInput, urlInput].forEach(el => el.addEventListener("keydown", e => {
         if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
       }));
       addBtn.addEventListener("click", submit);
       const add = document.createElement("div");
       add.className = "peer-add";
-      add.append(kindSelect, nameInput, taskInput, imageInput, addBtn);
+      add.append(kindSelect, nameInput, taskInput, urlInput, imageInput, addBtn);
       return add;
     }
 
@@ -2547,6 +2763,10 @@
         });
         data = await res.json();
         if (!res.ok) { alert(NPC_ERRORS[data.error] || "操作に失敗しました"); return; }
+        // サムネは取れたがoEmbedが拒否した動画(埋め込み禁止の可能性)。changeAreaと同じ扱い
+        if (data.embeddable === false) {
+          alert("この動画は外部サイトへの埋め込みが許可されていない可能性があります。\nマスには置きましたが、参加者の画面で再生できないかもしれません。");
+        }
       } catch {
         alert("操作に失敗しました");
         return;

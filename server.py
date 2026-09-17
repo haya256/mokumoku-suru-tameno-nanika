@@ -31,12 +31,13 @@ messages = []
 board = {}
 # カスタムキャラ画像は board と同じライフサイクル(退室で破棄、再起動で消える)
 custom_images = {}  # cid -> {"data": bytes, "v": int}
+npc_images = {}  # npc board id -> {"data": bytes, "mime": str, "version": str} (YouTube NPCのサムネ)
 _img_seq = 0  # キャッシュバスター用の通し番号。退室しても巻き戻さない(再入室時のキャッシュ誤爆防止)
 room_image_version = 0  # 部屋画像が変更されるたびに+1(クライアントが変化検知するためだけの値)
 MAX_IMAGE_B64 = 700_000
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
-NPC_KINDS = ("basic", "calendar", "clock")  # 将来 talking/ai_persona 等を足す想定の許可リスト
+NPC_KINDS = ("basic", "calendar", "clock", "youtube")  # 将来 talking/ai_persona 等を足す想定の許可リスト
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 # 直近のDiscord送信結果。None=未送信。URL失効(404)等に画面で気づけるように保持する
 discord_last_ok = None
@@ -609,6 +610,18 @@ def area_image(area_id):
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
+# YouTube NPCのサムネを中継。area_imagesと同じ役割だが、NPCはworld.areasに存在しない
+# (boardという別のライフサイクルで管理される)ため、find_areaではなくboardのnpcフラグで存在確認する
+@app.route("/npc-image/<npc_id>")
+def npc_image(npc_id):
+    entry = board.get(npc_id)
+    img = npc_images.get(npc_id)
+    if not entry or not entry.get("npc") or not img:
+        return jsonify({"error": "not found"}), 404
+    return Response(img["data"], mimetype=img.get("mime", "image/jpeg"),
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
+
 # ピア参加者のカスタムキャラ画像を中継。人数分あって大半は使われないので巡回時には先読みせず、
 # 要求された時点で取りに行って (peer_id, cid) 単位でキャッシュする
 @app.route("/peer-chara/<peer_id>/<cid>.png")
@@ -976,7 +989,19 @@ def prepare_clock_npc(data):
     name = " ".join((data.get("name") or "").split())[:40] or DEFAULT_CLOCK_NAME
     return {"name": name, "task": "", "raw": None}, None
 
-NPC_PREPARERS = {"basic": prepare_basic_npc, "calendar": prepare_calendar_npc, "clock": prepare_clock_npc}
+# YouTube NPC: 動画1本を持つNPC。動画IDの検証・サムネ取得・埋め込み可否チェックは
+# 既存のprepare_youtube_area()をそのまま再利用する。サムネの実体(npc_images)はadmin_npc()側で
+# 登録する(npc idが決まるのはboard[cid]作成時のため、この関数の時点ではまだ存在しない)
+def prepare_youtube_npc(data):
+    prepared, error = prepare_youtube_area(data)
+    if error:
+        return None, error
+    return {"name": prepared["name"], "task": "", "raw": None,
+            "videoId": prepared["videoId"], "thumbnail": prepared["thumbnail"],
+            "embeddable": prepared["embeddable"]}, None
+
+NPC_PREPARERS = {"basic": prepare_basic_npc, "calendar": prepare_calendar_npc, "clock": prepare_clock_npc,
+                 "youtube": prepare_youtube_npc}
 
 # NPCの追加・撤去。実参加者の入退室(join/leave/kick)とは別のライフサイクルとして扱う
 # (NPCは自分からは退室しないため、片付けは常にこのエンドポイント経由)。
@@ -1011,8 +1036,12 @@ def admin_npc():
             board[cid] = {"id": cid, "name": prepared["name"], "start": datetime.now().strftime("%H:%M"),
                           "end": "", "task": prepared["task"], "room": room,
                           "pose": random.randint(0, 2), "imgv": imgv, "npc": True, "kind": kind}
+            if "videoId" in prepared:
+                board[cid]["videoId"] = prepared["videoId"]
+                npc_images[cid] = {"data": prepared["thumbnail"], "mime": "image/jpeg",
+                                    "version": prepared["videoId"]}
         add_system_message(f"🤖 管理者がNPC「{prepared['name']}」をルーム{room}に入室させました")
-        return jsonify({"ok": True, "npc": board[cid]}), 201
+        return jsonify({"ok": True, "npc": board[cid], "embeddable": prepared.get("embeddable", True)}), 201
     if action == "remove":
         cid = (data.get("id") or "").strip()
         entry = board.get(cid)
@@ -1020,6 +1049,7 @@ def admin_npc():
             return jsonify({"error": "not found"}), 404
         board.pop(cid, None)
         custom_images.pop(cid, None)
+        npc_images.pop(cid, None)
         add_system_message(f"🤖 管理者がNPC「{entry['name']}」をルーム{entry['room']}から片付けました")
         return jsonify({"ok": True})
     return jsonify({"error": "invalid action"}), 400
