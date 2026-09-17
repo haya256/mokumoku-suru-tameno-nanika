@@ -36,6 +36,7 @@ room_image_version = 0  # 部屋画像が変更されるたびに+1(クライア
 MAX_IMAGE_B64 = 700_000
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
+NPC_KINDS = ("basic",)  # 将来 date_avatar/talking/ai_persona 等を足す想定の許可リスト
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 # 直近のDiscord送信結果。None=未送信。URL失効(404)等に画面で気づけるように保持する
 discord_last_ok = None
@@ -45,6 +46,9 @@ DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
 ROOM_IMAGE_DIR = "assets"
 ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
 _settings_write_lock = threading.Lock()
+# 空き部屋の確保〜board書き込みまでの間に別リクエストが割り込むと部屋番号が重複しうる
+# (waitressはデフォルトでマルチスレッド)。join_boardとNPC追加の両方でこの区間を守る
+_board_lock = threading.Lock()
 
 # ワールドマップ: 他のもくもくルーム(ピア)の情報を自分のサーバーが取りに行って参加者に中継する。
 # ブラウザから相手サーバーを直接叩かせないことで、CORS設定が不要になり、参加者が何人いても
@@ -711,6 +715,13 @@ def post_message():
 def get_board():
     return jsonify(list(board.values()))
 
+# 空いている部屋番号を1つ選ぶ(無ければNone)。人間の入室(join_board)とNPCの入室で
+# ロジックを共有することで、両者が同じ部屋番号を取り合わないことを構造的に保証する
+def pick_free_room():
+    used = {e["room"] for e in board.values()}
+    free = [r for r in range(1, ROOM_COUNT + 1) if r not in used]
+    return random.choice(free) if free else None
+
 # board はクライアントID(ブラウザごとに固定)をキーに持つ。名前は表示用で変更可
 @app.route("/board/join", methods=["POST"])
 def join_board():
@@ -727,12 +738,14 @@ def join_board():
     end = (data.get("end") or "").strip()
     is_new = cid not in board
     if is_new:
-        used = {e["room"] for e in board.values()}
-        free = [r for r in range(1, ROOM_COUNT + 1) if r not in used]
-        if not free:
-            return jsonify({"roomFull": True}), 200
-        room = random.choice(free)
-        pose = random.randint(0, 2)
+        with _board_lock:
+            room = pick_free_room()
+            if room is None:
+                return jsonify({"roomFull": True}), 200
+            pose = random.randint(0, 2)
+            # 次のpick_free_room()にこの部屋を空きと見せないための仮予約。
+            # 下の本書き込みで同じcidのまま完全な内容に上書きされる
+            board[cid] = {"id": cid, "room": room, "pose": pose}
     else:
         room = board[cid]["room"]
         pose = board[cid]["pose"]
@@ -933,6 +946,67 @@ def admin_area():
             add_system_message(f"🌐 管理者がブラウザ「{removed.get('name')}」を片付けました")
         elif removed:
             add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
+        return jsonify({"ok": True})
+    return jsonify({"error": "invalid action"}), 400
+
+# 基本NPC: 名前・やること・画像(任意)を管理者がその都度自由入力する。
+# 将来kindが増えたら、この関数と同じ形で prepare_xxx_npc() を追加し、admin_npc()の分岐に足すだけでよい
+def prepare_basic_npc(data):
+    name = " ".join((data.get("name") or "").split())[:40]
+    task = " ".join((data.get("task") or "").split())[:80]
+    if not name or not task:
+        return None, (jsonify({"error": "name and task required"}), 400)
+    raw = None
+    image = data.get("image")
+    if image:
+        raw = decode_chara_image(image)
+        if raw is None:
+            return None, (jsonify({"error": "invalid image"}), 400)
+    return {"name": name, "task": task, "raw": raw}, None
+
+# NPCの追加・撤去。実参加者の入退室(join/leave/kick)とは別のライフサイクルとして扱う
+# (NPCは自分からは退室しないため、片付けは常にこのエンドポイント経由)。
+# /admin/area と同じくaction+kindで振る舞いを切り替える形にしておき、将来のkind追加に備える
+@app.route("/admin/npc", methods=["POST"])
+def admin_npc():
+    data = request.get_json() or {}
+    supplied = (data.get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    action = (data.get("action") or "").strip()
+    kind = (data.get("kind") or "basic").strip()
+    if action == "add":
+        if kind not in NPC_KINDS:
+            return jsonify({"error": "invalid kind"}), 400
+        prepared, error = prepare_basic_npc(data)  # kindが増えたらここをdict分岐にする
+        if error:
+            return error
+        with _board_lock:
+            room = pick_free_room()
+            if room is None:
+                return jsonify({"roomFull": True}), 200
+            cid = f"npc-{secrets.token_hex(4)}"
+            while cid in board:
+                cid = f"npc-{secrets.token_hex(4)}"
+            imgv = 0
+            if prepared["raw"] is not None:
+                global _img_seq
+                _img_seq += 1
+                custom_images[cid] = {"data": prepared["raw"], "v": _img_seq}
+                imgv = _img_seq
+            board[cid] = {"id": cid, "name": prepared["name"], "start": datetime.now().strftime("%H:%M"),
+                          "end": "", "task": prepared["task"], "room": room,
+                          "pose": random.randint(0, 2), "imgv": imgv, "npc": True, "kind": kind}
+        add_system_message(f"🤖 管理者がNPC「{prepared['name']}」をルーム{room}に入室させました")
+        return jsonify({"ok": True, "npc": board[cid]}), 201
+    if action == "remove":
+        cid = (data.get("id") or "").strip()
+        entry = board.get(cid)
+        if not entry or not entry.get("npc"):
+            return jsonify({"error": "not found"}), 404
+        board.pop(cid, None)
+        custom_images.pop(cid, None)
+        add_system_message(f"🤖 管理者がNPC「{entry['name']}」をルーム{entry['room']}から片付けました")
         return jsonify({"ok": True})
     return jsonify({"error": "invalid action"}), 400
 

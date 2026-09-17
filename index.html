@@ -408,7 +408,7 @@
     #roomImageBtn { display: none; }
     #roomView.showing-self #roomImageBtn { display: block; }
 
-    #roomImagePanel, #worldPanel {
+    #roomImagePanel, #worldPanel, #npcPanel {
       position: absolute;
       top: 36px;
       right: 8px;
@@ -436,14 +436,14 @@
     #roomImagePanel img.selected { border-color: #3a3; }
     #roomImagePanel img:hover { opacity: 0.85; }
 
-    #worldPanel {
+    #worldPanel, #npcPanel {
       flex-direction: column;
       flex-wrap: nowrap;
       width: min(320px, calc(100% - 16px));
       font-size: 0.8rem;
     }
 
-    #worldPanel .peer-row {
+    #worldPanel .peer-row, #npcPanel .peer-row {
       display: flex;
       align-items: center;
       flex-wrap: wrap;
@@ -465,7 +465,7 @@
 
     #worldPanel .peer-swap button { flex-shrink: 0; font-size: 0.75rem; }
 
-    #worldPanel .peer-info {
+    #worldPanel .peer-info, #npcPanel .peer-info {
       flex: 1;
       min-width: 0;
       overflow: hidden;
@@ -473,9 +473,9 @@
       white-space: nowrap;
     }
 
-    #worldPanel .peer-empty { color: #aaa; }
+    #worldPanel .peer-empty, #npcPanel .peer-empty { color: #aaa; }
 
-    #worldPanel .peer-del {
+    #worldPanel .peer-del, #npcPanel .peer-del {
       flex-shrink: 0;
       background: #fff;
       color: #c33;
@@ -485,9 +485,9 @@
       font-size: 0.75rem;
     }
 
-    #worldPanel .peer-del:hover { background: #fee; }
+    #worldPanel .peer-del:hover, #npcPanel .peer-del:hover { background: #fee; }
 
-    #worldPanel .peer-add {
+    #worldPanel .peer-add, #npcPanel .peer-add {
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -495,8 +495,9 @@
       padding-top: 8px;
     }
 
-    #worldPanel .peer-add input, #worldPanel .peer-add select { font-size: 0.8rem; }
-    #worldPanel .peer-add button { padding: 5px 10px; font-size: 0.8rem; }
+    #worldPanel .peer-add input, #worldPanel .peer-add select,
+    #npcPanel .peer-add input, #npcPanel .peer-add select { font-size: 0.8rem; }
+    #worldPanel .peer-add button, #npcPanel .peer-add button { padding: 5px 10px; font-size: 0.8rem; }
 
     .room-overlay {
       position: absolute;
@@ -1560,8 +1561,9 @@
         div.className = local ? "entry" : "entry remote";
         const when = `${esc(e.start)}〜${esc(e.end || "?")}`;
         div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span><span class="when">${when}</span><span class="what">${esc(e.task)}</span>`;
-        // 相手サーバーの参加者は操作できないので強制退出ボタンは出さない
-        if (local && isAdmin && e.id !== clientId) {
+        // 相手サーバーの参加者は操作できないので強制退出ボタンは出さない。
+        // NPCの片付けは強制退出とは別のライフサイクル(NPC管理パネル)で行うのでここには出さない
+        if (local && isAdmin && e.id !== clientId && !e.npc) {
           const kickBtn = document.createElement("button");
           kickBtn.type = "button";
           kickBtn.className = "kick";
@@ -1835,12 +1837,14 @@
         bar.append(
           adminButton("roomImageBtn", "部屋画像を変更", toggleRoomImagePanel),
           adminButton("worldBtn", "ワールド設定", toggleWorldPanel),
+          adminButton("npcBtn", "NPC管理", toggleNpcPanel),
         );
         roomViewEl.appendChild(bar);
       } else if (!isAdmin) {
         existingBar?.remove();
         document.getElementById("roomImagePanel")?.remove();
         document.getElementById("worldPanel")?.remove();
+        document.getElementById("npcPanel")?.remove();
       }
     }
 
@@ -2098,6 +2102,116 @@
       document.getElementById("worldPanel")?.remove();
       await poll();
       toggleWorldPanel(); // 更新後の一覧を出し直す
+    }
+
+    // NPCの種別ごとの見せ方(AREA_KINDSと同じ思想)。今は自由入力の基本NPCのみ。
+    // 将来「やること」を持たないNPC(日付アバター等)を足すときは、ここにエントリを増やし、
+    // buildNpcAddFormの入力欄をkindに応じて出し分ける
+    const NPC_KINDS = {
+      basic: {
+        label: "基本NPC", addLabel: "入室させる", delLabel: "片付ける",
+        confirm: "このNPCを片付けますか？",
+      },
+    };
+
+    const NPC_ERRORS = {
+      "name and task required": "名前とやることを入力してください",
+      "invalid image": "画像として読み込めませんでした",
+      "invalid kind": "不明な種別です",
+      "not found": "そのNPCは見つかりませんでした",
+      "admin required": "管理者合言葉が必要です",
+    };
+
+    // NPCは実参加者と同じboardに乗っているので、追加フェッチせず既にpoll済みのlastEntriesから拾う
+    function toggleNpcPanel() {
+      const existing = document.getElementById("npcPanel");
+      if (existing) { existing.remove(); return; }
+      const panel = document.createElement("div");
+      panel.id = "npcPanel";
+      const npcs = lastEntries.filter(e => e.npc);
+      if (npcs.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "peer-empty";
+        empty.textContent = "NPCはまだ配置されていません";
+        panel.appendChild(empty);
+      }
+      npcs.forEach(e => panel.appendChild(buildNpcRow(e)));
+      panel.appendChild(buildNpcAddForm());
+      roomViewEl.appendChild(panel);
+    }
+
+    function buildNpcRow(e) {
+      const spec = NPC_KINDS[e.kind] || NPC_KINDS.basic;
+      const row = document.createElement("div");
+      row.className = "peer-row";
+      const info = document.createElement("span");
+      info.className = "peer-info";
+      info.textContent = `🤖 ${e.name}(ルーム${e.room}): ${e.task}`;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "peer-del";
+      del.textContent = spec.delLabel;
+      del.addEventListener("click", () => changeNpc({ action: "remove", id: e.id, kind: e.kind }));
+      row.append(info, del);
+      return row;
+    }
+
+    // 今は基本NPCの1種類だけなのでkindの出し分けはせず、name/task/画像の3欄を固定で出す
+    function buildNpcAddForm() {
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.placeholder = "NPCの名前";
+      const taskInput = document.createElement("input");
+      taskInput.type = "text";
+      taskInput.placeholder = "やること・セリフ";
+      const imageInput = document.createElement("input");
+      imageInput.type = "file";
+      imageInput.accept = "image/*";
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.textContent = NPC_KINDS.basic.addLabel;
+      const submit = async () => {
+        const name = nameInput.value.trim();
+        const task = taskInput.value.trim();
+        if (!name || !task) { alert("名前とやることを入力してください"); return; }
+        let image = null;
+        if (imageInput.files[0]) {
+          try { image = await fileToDataUrl(imageInput.files[0]); }
+          catch { alert("画像として読み込めませんでした"); return; }
+        }
+        changeNpc({ action: "add", kind: "basic", name, task, ...(image && { image }) });
+      };
+      [nameInput, taskInput].forEach(el => el.addEventListener("keydown", e => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
+      }));
+      addBtn.addEventListener("click", submit);
+      const add = document.createElement("div");
+      add.className = "peer-add";
+      add.append(nameInput, taskInput, imageInput, addBtn);
+      return add;
+    }
+
+    async function changeNpc(body) {
+      const spec = NPC_KINDS[body.kind] || NPC_KINDS.basic;
+      if (body.action === "remove" && !confirm(spec.confirm)) return;
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      let data;
+      try {
+        const res = await fetch("/admin/npc", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, passphrase }),
+        });
+        data = await res.json();
+        if (!res.ok) { alert(NPC_ERRORS[data.error] || "操作に失敗しました"); return; }
+      } catch {
+        alert("操作に失敗しました");
+        return;
+      }
+      if (data.roomFull) { alert("満室です。NPCを入れる空き部屋がありません"); return; }
+      document.getElementById("npcPanel")?.remove();
+      await poll();
+      toggleNpcPanel(); // 更新後の一覧を出し直す
     }
 
     async function poll() {
