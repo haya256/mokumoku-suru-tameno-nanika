@@ -36,7 +36,7 @@ room_image_version = 0  # 部屋画像が変更されるたびに+1(クライア
 MAX_IMAGE_B64 = 700_000
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
-NPC_KINDS = ("basic",)  # 将来 date_avatar/talking/ai_persona 等を足す想定の許可リスト
+NPC_KINDS = ("basic", "calendar")  # 将来 talking/ai_persona 等を足す想定の許可リスト
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 # 直近のDiscord送信結果。None=未送信。URL失効(404)等に画面で気づけるように保持する
 discord_last_ok = None
@@ -964,6 +964,14 @@ def prepare_basic_npc(data):
             return None, (jsonify({"error": "invalid image"}), 400)
     return {"name": name, "task": task, "raw": raw}, None
 
+# カレンダーNPC: ワールドマップのカレンダーエリアと同じく、サーバーが持つのは名前だけ。
+# 日付は見ている人のブラウザのローカル日付をクライアントがそのまま描くので、taskや画像は扱わない
+def prepare_calendar_npc(data):
+    name = " ".join((data.get("name") or "").split())[:40] or DEFAULT_CALENDAR_NAME
+    return {"name": name, "task": "", "raw": None}, None
+
+NPC_PREPARERS = {"basic": prepare_basic_npc, "calendar": prepare_calendar_npc}
+
 # NPCの追加・撤去。実参加者の入退室(join/leave/kick)とは別のライフサイクルとして扱う
 # (NPCは自分からは退室しないため、片付けは常にこのエンドポイント経由)。
 # /admin/area と同じくaction+kindで振る舞いを切り替える形にしておき、将来のkind追加に備える
@@ -978,7 +986,7 @@ def admin_npc():
     if action == "add":
         if kind not in NPC_KINDS:
             return jsonify({"error": "invalid kind"}), 400
-        prepared, error = prepare_basic_npc(data)  # kindが増えたらここをdict分岐にする
+        prepared, error = NPC_PREPARERS[kind](data)
         if error:
             return error
         with _board_lock:

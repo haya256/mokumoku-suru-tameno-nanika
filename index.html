@@ -213,6 +213,32 @@
     /* 「今日」だけ強調。既存の入室ボタンの緑(#2a7)を流用して新色を増やさない */
     .calendar-face .cal-day.today { background: #2a7; color: #fff; border-radius: 50%; }
 
+    /* カレンダーNPC: 上のカレンダーエリアと同じ.calendar-face/buildCalendarFaceHTML()を再利用し、
+       部屋の1マス(.cell)に小さく出す。.tile.focused .calendar-face .cal-compact/.cal-full という
+       既存のトグルは.tileとの祖先子孫関係だけを見ているのでここでも無改修で効く。
+       上書きが要るのは「既定で非表示」と「タイル全体基準で大きすぎるフォント」の2点だけ
+       (.tile.calendar > .calendar-face の pointer-events:none は子コンビネータ限定で部屋タイルには
+       そもそもマッチしないため、クリックを妨げる心配はない) */
+    .cell .calendar-face {
+      display: flex;
+      position: static;
+      inset: auto;
+      width: 60%;
+      aspect-ratio: 2 / 3;
+      background: #a08f7c;
+      border-radius: 8%;
+      color: #3b4252;
+      pointer-events: auto;
+    }
+    .cell .calendar-face .cal-yearmonth { font-size: 0.4rem; line-height: 1.1; }
+    .cell .calendar-face .cal-daynum { font-size: 1.1rem; line-height: 1.1; }
+    .cell .calendar-face .cal-weekday-solo { font-size: 0.42rem; }
+
+    /* 拡大時は.tile.focused .cell .chara(57行目)と対になる形で幅を広げ、クリック可能を示す */
+    .tile.focused .cell .calendar-face { width: 90%; aspect-ratio: auto; cursor: pointer; }
+    .tile.focused .cell .calendar-face .cal-grid { font-size: 0.6rem; gap: 1px; }
+    .tile.focused .cell .calendar-face .cal-month { font-size: 0.55rem; }
+
     /* ブラウザエリア。iframeが読み込まれるまでの一瞬だけ見える背景 */
     .tile.browser { background: #cbd3d8; }
     .tile.browser > img, .tile.browser > .room-overlay { display: none; }
@@ -544,6 +570,13 @@
     #charaStatusText .row { display: flex; gap: 8px; }
     #charaStatusText .label { color: #ffd76b; flex-shrink: 0; }
     #charaStatusText .value { word-break: break-word; }
+
+    /* カレンダーNPCのステータスウィンドウ内表示。buildCalendarGrid()の出力(cal-month/cal-grid)を
+       そのまま流し込むだけなので(cal-compact/cal-fullのトグルは使わない)、読みやすい大きさにする */
+    #charaStatusText .calendar-face { display: block; color: #fff; }
+    #charaStatusText .calendar-face .cal-month { font-size: 1rem; margin-bottom: 6px; }
+    #charaStatusText .calendar-face .cal-grid { font-size: 0.95rem; gap: 4px; }
+    #charaStatusText .calendar-face .cal-weekday { opacity: 0.8; }
 
     #charaStatusCloseBtn {
       display: block;
@@ -1215,6 +1248,12 @@
         <div class="cal-full">${buildCalendarGrid(today.getFullYear(), today.getMonth(), today)}</div>`;
     }
 
+    // 日付が変わったかどうかの比較キー。renderCalendarTile(エリア)とrenderRoomInto(カレンダーNPC)の
+    // 両方で「日付が変わったときだけ再描画する」ために使う共通の形式
+    function calendarDateKey(date) {
+      return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    }
+
     // マスは9つ作ったきり使い回す。毎pollで作り直すとキャラのCSSアニメーションがリセットされるため
     const tiles = [];
     for (let i = 0; i < 9; i++) {
@@ -1324,14 +1363,21 @@
         pose: Math.min(2, Math.max(0, Math.trunc(e.pose) || 0)), imgv: e.imgv || 0,
         npc: !!e.npc, kind: e.kind || "basic",
       }));
-      // 変化がなければDOMを触らない(作り直すとCSSアニメーションがリセットされるため)
-      const state = JSON.stringify(occupants);
+      // 変化がなければDOMを触らない(作り直すとCSSアニメーションがリセットされるため)。
+      // カレンダーNPCが1体でもいる場合は、他の入退室が無くても日付が変わったら再描画したいので
+      // フィンガープリントに今日の日付キーを足す
+      const hasCalendarNpc = occupants.some(o => o.kind === "calendar");
+      const state = JSON.stringify({ occupants, today: hasCalendarNpc ? calendarDateKey(new Date()) : null });
       if (state === tile.lastState) return;
       tile.lastState = state;
       tile.cells.forEach(cell => cell.innerHTML = "");
       occupants.forEach(o => {
         const cell = tile.cells[o.room - 1];
         if (!cell) return;
+        if (o.kind === "calendar") {
+          renderCalendarNpcCell(cell, o, tile, roomLabel);
+          return;
+        }
         const chara = document.createElement("div");
         chara.className = "chara";
         // ステータスウィンドウの肖像に同じクロップをそのまま使い回すための情報(再計算しない)
@@ -1363,6 +1409,25 @@
         badge.title = o.task;
         cell.appendChild(badge);
       });
+    }
+
+    // カレンダーNPC専用のセル中身。通常のキャラスプライトの代わりにワールドマップのカレンダー
+    // エリアと同じ文字盤(コンパクト/月グリッドの切り替えもCSSで無改修のまま流用)を小さく置く。
+    // ポートレート(肖像)の概念を持たないのでopenCharaStatusにはportrait=nullを渡す
+    function renderCalendarNpcCell(cell, o, tile, roomLabel) {
+      const face = document.createElement("div");
+      face.className = "calendar-face";
+      face.innerHTML = buildCalendarFaceHTML(new Date());
+      face.addEventListener("click", e => {
+        if (!tile.el.classList.contains("focused")) return;
+        e.stopPropagation();
+        openCharaStatus(o, null, roomLabel);
+      });
+      cell.appendChild(face);
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = o.name;
+      cell.appendChild(badge);
     }
 
     function selfCharaUrl(o) {
@@ -1399,14 +1464,36 @@
           });
         },
       },
+      // ワールドマップのカレンダーエリアと同じ月グリッドを表示する。時間・やることは意味を
+      // 持たないので出さない。ポートレートも持たないのでopenCharaStatus側でportrait=nullとして扱う
+      calendar: {
+        render(container, o, roomLabel) {
+          const row = document.createElement("div");
+          row.className = "row";
+          const l = document.createElement("span"); l.className = "label"; l.textContent = "ルーム";
+          const v = document.createElement("span"); v.className = "value";
+          v.textContent = roomLabel ? `${roomLabel} #${o.room}` : `Room ${o.room}`;
+          row.append(l, v);
+          container.appendChild(row);
+
+          const today = new Date();
+          const face = document.createElement("div");
+          face.className = "calendar-face";
+          face.innerHTML = buildCalendarGrid(today.getFullYear(), today.getMonth(), today);
+          container.appendChild(face);
+        },
+      },
     };
 
     function openCharaStatus(o, portrait, roomLabel) {
       const spec = CHARA_STATUS_KINDS[o.kind] || CHARA_STATUS_KINDS.basic;
       charaStatusName.textContent = o.name;
-      charaStatusPortrait.classList.toggle("custom", portrait.custom);
-      charaStatusPortrait.style.backgroundImage = portrait.custom ? `url(${portrait.url})` : "";
-      charaStatusPortrait.style.backgroundPosition = portrait.custom ? "" : portrait.position;
+      charaStatusPortrait.hidden = !portrait;
+      if (portrait) {
+        charaStatusPortrait.classList.toggle("custom", portrait.custom);
+        charaStatusPortrait.style.backgroundImage = portrait.custom ? `url(${portrait.url})` : "";
+        charaStatusPortrait.style.backgroundPosition = portrait.custom ? "" : portrait.position;
+      }
       charaStatusText.innerHTML = "";
       spec.render(charaStatusText, o, roomLabel);
       charaStatusOverlay.hidden = false;
@@ -1594,7 +1681,7 @@
       tile.status.hidden = true;
       tile.playBtn.hidden = tile.zoomBtn.hidden = true;
       const today = new Date();
-      const key = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+      const key = calendarDateKey(today);
       if (tile.calendarKey !== key) {
         tile.calendarKey = key;
         tile.calendarFace.innerHTML = buildCalendarFaceHTML(today);
@@ -2254,13 +2341,17 @@
       toggleWorldPanel(); // 更新後の一覧を出し直す
     }
 
-    // NPCの種別ごとの見せ方(AREA_KINDSと同じ思想)。今は自由入力の基本NPCのみ。
-    // 将来「やること」を持たないNPC(日付アバター等)を足すときは、ここにエントリを増やし、
-    // buildNpcAddFormの入力欄をkindに応じて出し分ける
+    // NPCの種別ごとの見せ方(AREA_KINDSと同じ思想)。needsTask/needsImageで入力欄の要否を出し分ける
     const NPC_KINDS = {
       basic: {
         label: "基本NPC", addLabel: "入室させる", delLabel: "片付ける",
         confirm: "このNPCを片付けますか？",
+        needsTask: true, needsImage: true, nameHint: "NPCの名前",
+      },
+      calendar: {
+        label: "カレンダー", addLabel: "入室させる", delLabel: "片付ける",
+        confirm: "このカレンダーNPCを片付けますか？",
+        needsTask: false, needsImage: false, nameHint: "表示名 (任意/未指定なら「カレンダー」)",
       },
     };
 
@@ -2296,7 +2387,9 @@
       row.className = "peer-row";
       const info = document.createElement("span");
       info.className = "peer-info";
-      info.textContent = `🤖 ${e.name}(ルーム${e.room}): ${e.task}`;
+      info.textContent = e.task
+        ? `🤖 ${e.name}(ルーム${e.room}): ${e.task}`
+        : `🤖 ${e.name}(ルーム${e.room})`;
       const del = document.createElement("button");
       del.type = "button";
       del.className = "peer-del";
@@ -2306,11 +2399,13 @@
       return row;
     }
 
-    // 今は基本NPCの1種類だけなのでkindの出し分けはせず、name/task/画像の3欄を固定で出す
+    // kindセレクトで入力欄の要否を出し分ける(buildAreaAddFormのsyncKind方式と同型)
     function buildNpcAddForm() {
+      const kindSelect = document.createElement("select");
+      kindSelect.innerHTML = Object.entries(NPC_KINDS)
+        .map(([k, spec]) => `<option value="${k}">${spec.label}</option>`).join("");
       const nameInput = document.createElement("input");
       nameInput.type = "text";
-      nameInput.placeholder = "NPCの名前";
       const taskInput = document.createElement("input");
       taskInput.type = "text";
       taskInput.placeholder = "やること・セリフ";
@@ -2319,17 +2414,26 @@
       imageInput.accept = "image/*";
       const addBtn = document.createElement("button");
       addBtn.type = "button";
-      addBtn.textContent = NPC_KINDS.basic.addLabel;
+      const syncKind = () => {
+        const spec = NPC_KINDS[kindSelect.value];
+        nameInput.placeholder = spec.nameHint;
+        taskInput.hidden = !spec.needsTask;
+        imageInput.hidden = !spec.needsImage;
+        addBtn.textContent = spec.addLabel;
+      };
+      kindSelect.addEventListener("change", syncKind);
+      syncKind();
       const submit = async () => {
+        const spec = NPC_KINDS[kindSelect.value];
         const name = nameInput.value.trim();
         const task = taskInput.value.trim();
-        if (!name || !task) { alert("名前とやることを入力してください"); return; }
+        if (spec.needsTask && (!name || !task)) { alert("名前とやることを入力してください"); return; }
         let image = null;
-        if (imageInput.files[0]) {
+        if (spec.needsImage && imageInput.files[0]) {
           try { image = await fileToDataUrl(imageInput.files[0]); }
           catch { alert("画像として読み込めませんでした"); return; }
         }
-        changeNpc({ action: "add", kind: "basic", name, task, ...(image && { image }) });
+        changeNpc({ action: "add", kind: kindSelect.value, name, task, ...(image && { image }) });
       };
       [nameInput, taskInput].forEach(el => el.addEventListener("keydown", e => {
         if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
@@ -2337,7 +2441,7 @@
       addBtn.addEventListener("click", submit);
       const add = document.createElement("div");
       add.className = "peer-add";
-      add.append(nameInput, taskInput, imageInput, addBtn);
+      add.append(kindSelect, nameInput, taskInput, imageInput, addBtn);
       return add;
     }
 
