@@ -699,15 +699,24 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-end;
-      /* キャラ下端を部屋の高さの14%に保つ */
-      padding-bottom: 14%;
+      justify-content: center;
+      /* NPC種別ごとに画像の縦横比が違っても中心の高さが揃うよう、下端でなく中心で
+         そろえる。top/bottomを非対称にすることで中心を部屋の中央よりちょい下にずらす */
+      padding-top: 12%;
+      padding-bottom: 6%;
+    }
+
+    /* 上段(ルーム1,2,3)は部屋画像の壁が他の行より高く描かれていて中心がやや高く見えるので、
+       画像の種類によらず一律で少し下げる */
+    .cell:nth-child(-n+3) {
+      padding-top: 18%;
+      padding-bottom: 0%;
     }
 
     /* 縮小表示のマスでは名前バッジが部屋に対して大きすぎるので、拡大したマスだけで出す
-       (バッジは絶対配置なので、出すときはその高さぶんキャラを押し上げる) */
+       (バッジは絶対配置(745行)で.cellのflexレイアウトに参加しないので、ここでの
+       padding調整は不要) */
     .cell .badge { display: none; }
-    .tile.focused .cell { padding-bottom: calc(14% + 24px); }
     .tile.focused .cell .badge { display: block; }
 
     /* キャラクターのスプライトシート: 9列×6行。1キャラ=3列×2行(6ポーズ)のブロックが部屋と同じ3×3配置。
@@ -757,6 +766,11 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    /* 上段(ルーム1,2,3)はキャラ本体と同じ理由で名前プレートも少し下げる */
+    .cell:nth-child(-n+3) .badge {
+      bottom: 1%;
     }
 
     #main {
