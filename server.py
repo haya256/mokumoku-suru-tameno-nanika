@@ -26,15 +26,21 @@ time.tzset()
 mimetypes.add_type("image/webp", ".webp")
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+# チャット画像(WebP)をJSONボディに積むため、アバターのみだった頃の2MBから拡大
+app.config["MAX_CONTENT_LENGTH"] = 6 * 1024 * 1024
 messages = []
 board = {}
 # カスタムキャラ画像は board と同じライフサイクル(退室で破棄、再起動で消える)
 custom_images = {}  # cid -> {"data": bytes, "v": int}
 npc_images = {}  # npc board id -> {"data": bytes, "mime": str, "version": str} (YouTube NPCのサムネ)
+# チャットに添付された画像。messagesと同じく無制限に増え続け、再起動で消える(既存の割り切りに合わせる)
+message_images = {}  # image id -> bytes
+# 他サーバーのチャット画像を中継した際のキャッシュ。peer_chara_imagesと同じ役割
+peer_message_images = {}  # (peer_id, image_id) -> bytes
 _img_seq = 0  # キャッシュバスター用の通し番号。退室しても巻き戻さない(再入室時のキャッシュ誤爆防止)
 room_image_version = 0  # 部屋画像が変更されるたびに+1(クライアントが変化検知するためだけの値)
 MAX_IMAGE_B64 = 700_000
+MAX_CHAT_IMAGE_B64 = 4_000_000  # チャット画像はアバターより大きめの表示サイズを許容する
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 ROOM_COUNT = 9
 NPC_KINDS = ("basic", "calendar", "clock", "youtube")  # 将来 talking/ai_persona 等を足す想定の許可リスト
@@ -464,6 +470,8 @@ def poll_peers_once():
         peer_last_polled.pop(pid, None)
     for key in [k for k in peer_chara_images if k[0] not in peer_ids]:
         peer_chara_images.pop(key, None)
+    for key in [k for k in peer_message_images if k[0] not in peer_ids]:
+        peer_message_images.pop(key, None)
     # YouTubeエリアのサムネは設置・差し替え時に同期取得しているので、ここに残るのは
     # 「サーバーを再起動してインメモリのキャッシュが消えた」場合の取り直しだけ
     for a in areas:
@@ -533,6 +541,19 @@ def decode_chara_image(image):
         return None
     return raw
 
+# クライアントがcanvasで縮小・WebP化したデータURLを検証してWebPバイト列を返す。不正ならNone
+def decode_chat_image(image):
+    prefix = "data:image/webp;base64,"
+    if not isinstance(image, str) or not image.startswith(prefix) or len(image) > MAX_CHAT_IMAGE_B64:
+        return None
+    try:
+        raw = base64.b64decode(image[len(prefix):], validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if raw[:4] != WEBP_MAGIC_HEAD or raw[8:12] != WEBP_MAGIC_TAIL:
+        return None
+    return raw
+
 def post_to_discord(content):
     global discord_last_ok
     if not DISCORD_WEBHOOK_URL:
@@ -597,6 +618,17 @@ def chara_custom(cid):
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
+# チャットに添付された画像。idはメッセージごとに使い捨てで内容が変わらないため、
+# チャット画像はバージョンクエリなしで長期キャッシュしてよい
+@app.route("/message-image/<image_id>.webp")
+def message_image(image_id):
+    data = message_images.get(image_id)
+    if not data:
+        return jsonify({"error": "not found"}), 404
+    return Response(data, mimetype="image/webp",
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
+
 # エリアのマス絵を中継。ピアなら相手の部屋画像、YouTubeエリアなら動画のサムネイル。
 # 実体は取得済みのバイト列なので、ここから外部サーバーに触れることはない。
 # 形式がwebp(native)/png(fork)/jpeg(youtube)と分かれるため、拡張子は付けずキャッシュ済みのmimeを返す。
@@ -645,6 +677,29 @@ def peer_chara(peer_id, cid):
         cached = {"data": data, "version": version}
         peer_chara_images[(peer_id, cid)] = cached
     return Response(cached["data"], mimetype="image/png",
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
+
+# ピア参加者のチャット画像を中継。fork型ピアはメッセージのスキーマが異なり画像URLを持たないため対象外
+@app.route("/peer-message-image/<peer_id>/<image_id>.webp")
+def peer_message_image(peer_id, image_id):
+    peer = find_peer(peer_id)
+    if not peer or peer.get("type") == "fork":
+        return jsonify({"error": "not found"}), 404
+    key = (peer_id, image_id)
+    cached = peer_message_images.get(key)
+    if not cached:
+        quoted_id = urllib.parse.quote(image_id, safe="")
+        try:
+            data = fetch_peer_bytes(f"{peer['url']}/message-image/{quoted_id}.webp", PEER_IMAGE_MAX)
+        except Exception:
+            return jsonify({"error": "unavailable"}), 502
+        # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
+        if data[:4] != WEBP_MAGIC_HEAD or data[8:12] != WEBP_MAGIC_TAIL:
+            return jsonify({"error": "unavailable"}), 502
+        cached = data
+        peer_message_images[key] = cached
+    return Response(cached, mimetype="image/webp",
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
@@ -712,16 +767,26 @@ def post_message():
         return err
     name = data.get("name", "").strip()
     text = data.get("text", "").strip()
-    if not name or not text:
-        return jsonify({"error": "name and text required"}), 400
+    image = data.get("image")
+    image_id = None
+    if image:
+        raw = decode_chat_image(image)
+        if raw is None:
+            return jsonify({"error": "invalid image"}), 400
+        image_id = secrets.token_urlsafe(8)
+        message_images[image_id] = raw
+    if not name or (not text and not image_id):
+        return jsonify({"error": "name and text or image required"}), 400
     msg = {
         "name": name,
         "text": text,
         "time": datetime.now().strftime("%H:%M"),
         "ts": time.time(),
     }
+    if image_id:
+        msg["image"] = image_id
     messages.append(msg)
-    post_to_discord(f"**{name}**: {text}")
+    post_to_discord(f"**{name}**: {text}" if text else f"**{name}**: (画像)")
     return jsonify(msg), 201
 
 @app.route("/board", methods=["GET"])

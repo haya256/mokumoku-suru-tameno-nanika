@@ -966,6 +966,25 @@
       border-radius: 6px;
     }
 
+    .msg .image {
+      display: block;
+      max-width: 100%;
+      max-height: 320px;
+      border-radius: 6px;
+      margin-top: 6px;
+    }
+
+    #pendingImageRow {
+      align-items: center;
+      gap: 8px;
+    }
+    #pendingImagePreview {
+      max-height: 48px;
+      max-width: 96px;
+      border-radius: 4px;
+      object-fit: cover;
+    }
+
     .msg.system {
       background: none;
       border-radius: 0;
@@ -1197,8 +1216,14 @@
           <span id="myStatus"></span>
           <button type="button" id="editBtn">編集</button>
         </div>
+        <div class="row-line" id="pendingImageRow" style="display: none;">
+          <img id="pendingImagePreview" alt="添付画像プレビュー">
+          <button type="button" id="removePendingImageBtn">✕</button>
+        </div>
         <div class="row-line">
           <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
+          <input id="msgImage" type="file" accept="image/*" hidden>
+          <button type="button" id="attachImageBtn" title="画像を添付">📷</button>
           <button type="submit">送信</button>
         </div>
       </div>
@@ -1223,6 +1248,11 @@
     const startEl = document.getElementById("start");
     const endEl = document.getElementById("end");
     const charaEl = document.getElementById("chara");
+    const msgImageEl = document.getElementById("msgImage");
+    const attachImageBtn = document.getElementById("attachImageBtn");
+    const pendingImageRow = document.getElementById("pendingImageRow");
+    const pendingImagePreview = document.getElementById("pendingImagePreview");
+    const removePendingImageBtn = document.getElementById("removePendingImageBtn");
     const joinRow = document.getElementById("joinRow");
     const statusRow = document.getElementById("statusRow");
     const myStatusEl = document.getElementById("myStatus");
@@ -1458,6 +1488,7 @@
           const videoId = appendLinkedText(textEl, m.text);
           div.appendChild(textEl);
           if (videoId) div.appendChild(buildYouTubeEmbed(videoId));
+          if (m.image) div.appendChild(buildMsgImage(m));
         }
         messagesEl.appendChild(div);
       });
@@ -2115,7 +2146,8 @@
     // 自分のチャットとピアのチャットを1本の時系列にまとめる
     function mergedMessages() {
       const all = localMessages.map(m => ({ ...m, ts: msgTs(m), from: null }));
-      peerAreas().forEach(p => (p.messages || []).forEach(m => all.push({ ...m, ts: msgTs(m), from: p.name })));
+      // peerIdは添付画像を /peer-message-image/<peerId>/... 経由で引くために使う
+      peerAreas().forEach(p => (p.messages || []).forEach(m => all.push({ ...m, ts: msgTs(m), from: p.name, peerId: p.id })));
       return all.sort((a, b) => a.ts - b.ts);
     }
 
@@ -2247,6 +2279,25 @@
       return wrap;
     }
 
+    // チャット添付画像。ローカルは自サーバー、ピア由来(m.fromあり)は中継エンドポイント経由で取得する。
+    // クリックで原寸を別タブに開けるよう<a>でラップする
+    function buildMsgImage(m) {
+      const src = m.from
+        ? `/peer-message-image/${encodeURIComponent(m.peerId)}/${encodeURIComponent(m.image)}.webp`
+        : `/message-image/${encodeURIComponent(m.image)}.webp`;
+      const link = document.createElement("a");
+      link.href = src;
+      link.target = "_blank";
+      link.rel = "noopener";
+      const img = document.createElement("img");
+      img.className = "image";
+      img.src = src;
+      img.loading = "lazy";
+      img.alt = "";
+      link.appendChild(img);
+      return link;
+    }
+
     function nowHHMM() {
       return new Date().toTimeString().slice(0, 5);
     }
@@ -2261,6 +2312,18 @@
       canvas.height = Math.max(1, Math.round(bmp.height * scale));
       canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
       return canvas.toDataURL("image/png");
+    }
+
+    // チャット添付用。最大1600pxに縮小し、WebP品質50でエンコードする(画像でないファイルはthrow)
+    async function fileToWebpDataUrl(file) {
+      const bmp = await createImageBitmap(file);
+      const MAX = 1600;
+      const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bmp.width * scale));
+      canvas.height = Math.max(1, Math.round(bmp.height * scale));
+      canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/webp", 0.5);
     }
 
     // 書き込み系APIの共通処理。サーバーがvery easyモードのときは401が返るので、
@@ -2826,15 +2889,62 @@
       textEl.style.height = Math.min(textEl.scrollHeight, 120) + "px";
     });
 
+    // 送信待ちの添付画像(WebPデータURL)。1メッセージにつき1枚まで
+    let pendingImage = null;
+
+    function setPendingImage(dataUrl) {
+      pendingImage = dataUrl;
+      pendingImagePreview.src = dataUrl;
+      pendingImageRow.style.display = "flex";
+    }
+
+    function clearPendingImage() {
+      pendingImage = null;
+      pendingImagePreview.src = "";
+      pendingImageRow.style.display = "none";
+      msgImageEl.value = "";
+    }
+
+    attachImageBtn.addEventListener("click", () => msgImageEl.click());
+
+    msgImageEl.addEventListener("change", async () => {
+      const file = msgImageEl.files[0];
+      if (!file) return;
+      try {
+        setPendingImage(await fileToWebpDataUrl(file));
+      } catch {
+        alert("画像として読み込めませんでした");
+        msgImageEl.value = "";
+      }
+    });
+
+    removePendingImageBtn.addEventListener("click", clearPendingImage);
+
+    // クリップボードに画像がある状態でチャット欄にCtrl+Vすると、そのまま添付扱いにする。
+    // 画像を含まないペースト(通常のテキスト貼り付け)は既定の動作のままにする
+    textEl.addEventListener("paste", async e => {
+      const item = [...(e.clipboardData?.items || [])].find(i => i.kind === "file" && i.type.startsWith("image/"));
+      if (!item) return;
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) return;
+      try {
+        setPendingImage(await fileToWebpDataUrl(file));
+      } catch {
+        alert("画像として読み込めませんでした");
+      }
+    });
+
     form.addEventListener("submit", async e => {
       e.preventDefault();
       const name = nameEl.value.trim();
       const text = textEl.value.trim();
-      if (!name || !text) return;
-      const result = await postJson("/messages", { name, text });
+      if (!name || (!text && !pendingImage)) return;
+      const result = await postJson("/messages", { name, text, ...(pendingImage && { image: pendingImage }) });
       if (!result) return;
       textEl.value = "";
       textEl.style.height = "auto";
+      clearPendingImage();
       await poll();
     });
 
