@@ -2497,7 +2497,7 @@
         const res = await fetch("/board/kick", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, passphrase }),
+          body: JSON.stringify({ id, passphrase, actorId: clientId }),
         });
         if (!res.ok) { alert("強制退出に失敗しました"); return; }
       } catch {
@@ -2580,7 +2580,7 @@
         const res = await fetch("/admin/room-image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ passphrase, file: name }),
+          body: JSON.stringify({ passphrase, file: name, actorId: clientId }),
         });
         if (!res.ok) { alert("部屋画像の変更に失敗しました"); return; }
         data = await res.json();
@@ -2627,7 +2627,7 @@
         const res = await fetch("/admin/room-state", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ passphrase, state }),
+          body: JSON.stringify({ passphrase, state, actorId: clientId }),
         });
         if (!res.ok) { alert("ルームの状態の変更に失敗しました"); return; }
         data = await res.json();
@@ -2812,7 +2812,7 @@
         const res = await fetch("/admin/area", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...body, passphrase }),
+          body: JSON.stringify({ ...body, passphrase, actorId: clientId }),
         });
         const data = await res.json();
         if (!res.ok) { alert(AREA_ERRORS[data.error] || "操作に失敗しました"); return; }
@@ -2964,7 +2964,7 @@
         const res = await fetch("/admin/npc", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...body, passphrase }),
+          body: JSON.stringify({ ...body, passphrase, actorId: clientId }),
         });
         data = await res.json();
         if (!res.ok) { alert(NPC_ERRORS[data.error] || "操作に失敗しました"); return; }

@@ -170,6 +170,13 @@ def is_admin_passphrase(supplied):
         return False
     return hmac.compare_digest((supplied or "").strip().encode(), expected.encode())
 
+# 管理者操作のログに載せる実行者名。クライアントが送る actorId(自分のクライアントID)から入室中の名前を引く。
+# 見る専(未入室)などで名前が引けないときは「管理者」だけにする
+def admin_label(data):
+    entry = board.get(((data or {}).get("actorId") or "").strip())
+    name = (entry or {}).get("name")
+    return f"{name}（管理者）" if name else "管理者"
+
 # 部屋画像として選択可能なファイルの一覧。命名規則を正規表現で完全一致させることで、
 # 以降の処理はこの戻り値に含まれるかどうかだけで判定でき、パストラバーサルの余地がない
 def list_room_images():
@@ -852,8 +859,9 @@ def join_board():
     imgv = custom_images.get(cid, {}).get("v", 0)
     board[cid] = {"id": cid, "name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose, "imgv": imgv}
     if is_new:
+        admin_suffix = "（管理者）" if is_admin_passphrase((data.get("passphrase") or "").strip()) else ""
         until = f"〜{end}" if end else "〜"
-        add_system_message(f"🟢 {name} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
+        add_system_message(f"🟢 {name}{admin_suffix} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
     return jsonify(board[cid]), 201
 
 # クライアントが今保持している合言葉が管理者合言葉と一致するか確認するだけの読み取り専用エンドポイント。
@@ -874,7 +882,7 @@ def kick_board():
     entry = board.pop(cid, None)
     custom_images.pop(cid, None)
     if entry:
-        add_system_message(f"🚫 {entry['name']} が管理者によりルーム{entry['room']}から強制退室させられました")
+        add_system_message(f"🚫 {entry['name']} が{admin_label(data)}によりルーム{entry['room']}から強制退室させられました")
     return jsonify({"ok": True})
 
 # 画像一覧取得: 管理者合言葉必須(kickと同型のゲート)。画像バイト自体はroom_image_previewで別途取得させる
@@ -900,7 +908,7 @@ def admin_set_room_image():
         return jsonify({"error": "invalid file"}), 400
     set_room_image_setting(filename)
     room_image_version += 1
-    add_system_message(f"🖼️ 管理者が部屋画像を {filename} に変更しました")
+    add_system_message(f"🖼️ {admin_label(data)}が部屋画像を {filename} に変更しました")
     return jsonify({"ok": True, "file": filename, "version": room_image_version})
 
 # ルームの状態変更の実行: 電気を消したような演出(準備中/Closed)をON/OFFする管理者専用操作
@@ -915,9 +923,9 @@ def admin_set_room_state():
         return jsonify({"error": "invalid state"}), 400
     set_room_state_setting(state)
     if state == "normal":
-        add_system_message("💡 管理者がルームの状態を通常に戻しました")
+        add_system_message(f"💡 {admin_label(data)}がルームの状態を通常に戻しました")
     else:
-        add_system_message(f"🚪 管理者がルームを「{ROOM_STATE_LABELS[state]}」にしました")
+        add_system_message(f"🚪 {admin_label(data)}がルームを「{ROOM_STATE_LABELS[state]}」にしました")
     return jsonify({"ok": True, "state": state})
 
 # エリア一覧の取得: 管理者合言葉必須(kick/room-imagesと同型のゲート)。
@@ -981,7 +989,7 @@ def admin_area():
         if result.get("error") == "full":
             return jsonify({"error": "area limit reached"}), 400
         cache_youtube_thumbnail(result["area"]["id"], prepared)  # idはここで初めて決まる
-        add_system_message(f"📺 管理者がYouTubeルーム「{prepared['name']}」を置きました")
+        add_system_message(f"📺 {admin_label(data)}がYouTubeルーム「{prepared['name']}」を置きました")
         return jsonify({"ok": True, "area": result["area"], "embeddable": prepared["embeddable"]})
     # 時計は外から取ってくるものが何も無いので、名前を整えて置くだけ。
     # peerの分岐より前に置くこと(下の add はpeerのフォールバックなので、URLを要求されてしまう)
@@ -990,7 +998,7 @@ def admin_area():
         result = add_area("clock", name, {})
         if result.get("error") == "full":
             return jsonify({"error": "area limit reached"}), 400
-        add_system_message(f"🕐 管理者が時計「{name}」を置きました")
+        add_system_message(f"🕐 {admin_label(data)}が時計「{name}」を置きました")
         return jsonify({"ok": True, "area": result["area"]})
     # カレンダーも外から取ってくるものが何も無い。peerの分岐より前に置くこと
     if action == "add" and kind == "calendar":
@@ -998,7 +1006,7 @@ def admin_area():
         result = add_area("calendar", name, {})
         if result.get("error") == "full":
             return jsonify({"error": "area limit reached"}), 400
-        add_system_message(f"📅 管理者がカレンダー「{name}」を置きました")
+        add_system_message(f"📅 {admin_label(data)}がカレンダー「{name}」を置きました")
         return jsonify({"ok": True, "area": result["area"]})
     # ブラウザは任意ページなのでpeerと違いパス・クエリを許可する専用バリデータを使う。
     # peerの分岐より前に置くこと(下の add はpeerのフォールバックなので、URL形式チェックが
@@ -1012,7 +1020,7 @@ def admin_area():
         result = add_area("browser", name, {"url": url})
         if result.get("error") == "full":
             return jsonify({"error": "area limit reached"}), 400
-        add_system_message(f"🌐 管理者がブラウザ「{name}」を置きました")
+        add_system_message(f"🌐 {admin_label(data)}がブラウザ「{name}」を置きました")
         return jsonify({"ok": True, "area": result["area"], "embeddable": embeddable})
     if action == "add":
         url = normalize_peer_url(data.get("url"))
@@ -1025,7 +1033,7 @@ def admin_area():
             return jsonify({"error": "already connected"}), 400
         if result.get("error") == "full":
             return jsonify({"error": "area limit reached"}), 400
-        add_system_message(f"🌏 管理者が「{name}」とつながりました")
+        add_system_message(f"🌏 {admin_label(data)}が「{name}」とつながりました")
         return jsonify({"ok": True, "area": result["area"]})
     # 差し替えは今のところYouTubeエリアの動画だけ。マスの位置(slot)は動かさない
     if action == "update":
@@ -1037,20 +1045,20 @@ def admin_area():
             return error
         update_area(area["id"], {"videoId": prepared["videoId"], "name": prepared["name"]})
         cache_youtube_thumbnail(area["id"], prepared)
-        add_system_message(f"📺 管理者がYouTubeルームの動画を「{prepared['name']}」に変えました")
+        add_system_message(f"📺 {admin_label(data)}がYouTubeルームの動画を「{prepared['name']}」に変えました")
         return jsonify({"ok": True, "embeddable": prepared["embeddable"]})
     if action == "remove":
         removed = remove_area((data.get("id") or "").strip())
         if removed and removed.get("kind") == "youtube":
-            add_system_message(f"📺 管理者がYouTubeルーム「{removed.get('name')}」を片付けました")
+            add_system_message(f"📺 {admin_label(data)}がYouTubeルーム「{removed.get('name')}」を片付けました")
         elif removed and removed.get("kind") == "clock":
-            add_system_message(f"🕐 管理者が時計「{removed.get('name')}」を片付けました")
+            add_system_message(f"🕐 {admin_label(data)}が時計「{removed.get('name')}」を片付けました")
         elif removed and removed.get("kind") == "calendar":
-            add_system_message(f"📅 管理者がカレンダー「{removed.get('name')}」を片付けました")
+            add_system_message(f"📅 {admin_label(data)}がカレンダー「{removed.get('name')}」を片付けました")
         elif removed and removed.get("kind") == "browser":
-            add_system_message(f"🌐 管理者がブラウザ「{removed.get('name')}」を片付けました")
+            add_system_message(f"🌐 {admin_label(data)}がブラウザ「{removed.get('name')}」を片付けました")
         elif removed:
-            add_system_message(f"🌏 管理者が「{removed.get('name')}」との接続を解除しました")
+            add_system_message(f"🌏 {admin_label(data)}が「{removed.get('name')}」との接続を解除しました")
         return jsonify({"ok": True})
     return jsonify({"error": "invalid action"}), 400
 
@@ -1132,7 +1140,7 @@ def admin_npc():
                 board[cid]["videoId"] = prepared["videoId"]
                 npc_images[cid] = {"data": prepared["thumbnail"], "mime": "image/jpeg",
                                     "version": prepared["videoId"]}
-        add_system_message(f"🤖 管理者がNPC「{prepared['name']}」をルーム{room}に入室させました")
+        add_system_message(f"🤖 {admin_label(data)}がNPC「{prepared['name']}」をルーム{room}に入室させました")
         return jsonify({"ok": True, "npc": board[cid], "embeddable": prepared.get("embeddable", True)}), 201
     if action == "remove":
         cid = (data.get("id") or "").strip()
@@ -1142,7 +1150,7 @@ def admin_npc():
         board.pop(cid, None)
         custom_images.pop(cid, None)
         npc_images.pop(cid, None)
-        add_system_message(f"🤖 管理者がNPC「{entry['name']}」をルーム{entry['room']}から片付けました")
+        add_system_message(f"🤖 {admin_label(data)}がNPC「{entry['name']}」をルーム{entry['room']}から片付けました")
         return jsonify({"ok": True})
     return jsonify({"error": "invalid action"}), 400
 
