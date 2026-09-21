@@ -42,6 +42,9 @@ room_image_version = 0  # 部屋画像が変更されるたびに+1(クライア
 MAX_IMAGE_B64 = 700_000
 MAX_CHAT_IMAGE_B64 = 4_000_000  # チャット画像はアバターより大きめの表示サイズを許容する
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+# ルームの見た目状態(通常/準備中/Closed)。管理者専用の演出切り替え用
+ROOM_STATES = ("normal", "preparing", "closed")
+ROOM_STATE_LABELS = {"preparing": "準備中", "closed": "Closed"}  # システムメッセージ表示用
 ROOM_COUNT = 9
 NPC_KINDS = ("basic", "calendar", "clock", "youtube")  # 将来 talking/ai_persona 等を足す想定の許可リスト
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -142,6 +145,12 @@ def update_settings(mutate):
 def set_room_image_setting(filename):
     def mutate(settings):
         settings.setdefault("appearance", {})["room_image"] = f"{ROOM_IMAGE_DIR}/{filename}"
+    update_settings(mutate)
+
+# appearance.room_stateだけを部分更新する。stateはROOM_STATESで検証済みの前提
+def set_room_state_setting(state):
+    def mutate(settings):
+        settings.setdefault("appearance", {})["room_state"] = state
     update_settings(mutate)
 
 # ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
@@ -712,7 +721,8 @@ def get_status():
         discord = "error"
     else:
         discord = "on"
-    return jsonify({"discord": discord, "roomImageVersion": room_image_version})
+    room_state = load_settings().get("appearance", {}).get("room_state", "normal")
+    return jsonify({"discord": discord, "roomImageVersion": room_image_version, "roomState": room_state})
 
 # マップに置かれたエリアをまとめて返す。ピアについては巡回スレッドが貯めた状態を返すだけで、
 # ここから相手サーバーへのアクセスは発生しない(クライアントの2秒pollと5秒巡回は完全に独立)。
@@ -892,6 +902,23 @@ def admin_set_room_image():
     room_image_version += 1
     add_system_message(f"🖼️ 管理者が部屋画像を {filename} に変更しました")
     return jsonify({"ok": True, "file": filename, "version": room_image_version})
+
+# ルームの状態変更の実行: 電気を消したような演出(準備中/Closed)をON/OFFする管理者専用操作
+@app.route("/admin/room-state", methods=["POST"])
+def admin_set_room_state():
+    data = request.get_json()
+    supplied = ((data or {}).get("passphrase") or "").strip()
+    if not is_admin_passphrase(supplied):
+        return jsonify({"error": "admin required"}), 403
+    state = (data.get("state") or "").strip()
+    if state not in ROOM_STATES:
+        return jsonify({"error": "invalid state"}), 400
+    set_room_state_setting(state)
+    if state == "normal":
+        add_system_message("💡 管理者がルームの状態を通常に戻しました")
+    else:
+        add_system_message(f"🚪 管理者がルームを「{ROOM_STATE_LABELS[state]}」にしました")
+    return jsonify({"ok": True, "state": state})
 
 # エリア一覧の取得: 管理者合言葉必須(kick/room-imagesと同型のゲート)。
 # /world と違って相手ルームのURLも返す(管理画面で「どこにつないでいるか」を確かめるため)

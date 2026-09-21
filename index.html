@@ -466,6 +466,32 @@
        hidden属性を効かせるには自分で打ち消す必要がある */
     .tile-status[hidden] { display: none; }
 
+    /* 管理者が「準備中/Closed」にしたときの演出。電気を消したような暗さ+すりガラス越し。
+       pointer-events: none であくまで見た目だけにし、下のアバターや拡大操作は妨げない */
+    .tile-room-state {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 10, 16, 0.62);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
+      color: #fff;
+      font-size: 1.05rem;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      line-height: 1.5;
+      text-align: center;
+      white-space: pre-line; /* テキスト中の\nを改行として表示するため */
+      padding: 0 10%;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+      pointer-events: none;
+    }
+    .tile-room-state[hidden] { display: none; }
+    .tile.focused .tile-room-state { font-size: 1.4rem; }
+
     #backToMapBtn, #adminBar button {
       background: rgba(255,255,255,0.85);
       color: #333;
@@ -498,7 +524,7 @@
     #roomImageBtn { display: none; }
     #roomView.showing-self #roomImageBtn { display: block; }
 
-    #roomImagePanel, #worldPanel, #npcPanel {
+    #roomImagePanel, #worldPanel, #npcPanel, #roomStatePanel {
       position: absolute;
       top: 36px;
       right: 8px;
@@ -525,6 +551,18 @@
 
     #roomImagePanel img.selected { border-color: #3a3; }
     #roomImagePanel img:hover { opacity: 0.85; }
+
+    #roomStatePanel button {
+      padding: 5px 12px;
+      font-size: 0.8rem;
+      border: 2px solid transparent;
+      border-radius: 4px;
+      background: #eee;
+      color: #333;
+      cursor: pointer;
+    }
+    #roomStatePanel button.selected { border-color: #3a3; background: #dfd; }
+    #roomStatePanel button:hover { opacity: 0.85; }
 
     #worldPanel, #npcPanel {
       flex-direction: column;
@@ -1290,6 +1328,9 @@
     // 部屋画像のバージョン。nullは「まだ基準値を持っていない」状態(初回pollで基準値として記録するだけで再取得はしない)
     let roomImageVersion = null;
     let pendingImageVersion = null; // ジッター待ち中のバージョン(同じ変化に対して二重にsetTimeoutしない)
+    // ルームの見た目状態。normal以外なら自分のルームに演出オーバーレイを出す(renderWorld参照)
+    let roomState = "normal";
+    const ROOM_STATE_LABELS = { preparing: "準備中", closed: "～ おしまい ～\nご参加、ご視聴ありがとうございました！" };
     nameEl.value = localStorage.getItem("mokumoku-name") || "";
     // 入室を待たず、名前欄の変更時点で即保存する
     nameEl.addEventListener("input", () => {
@@ -1442,13 +1483,20 @@
       // iframeを作る。中身はrenderBrowserTile/resetTileがreplaceChildrenで出し入れする
       const browserFrame = document.createElement("div");
       browserFrame.className = "browser-frame";
-      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face, calFace, browserFrame);
+      // 自分のルームが「準備中/Closed」のときだけ使う演出用オーバーレイ(管理者操作、renderWorld参照)
+      const roomStateOverlay = document.createElement("div");
+      roomStateOverlay.className = "tile-room-state";
+      roomStateOverlay.hidden = true;
+      const roomStateText = document.createElement("span");
+      roomStateOverlay.appendChild(roomStateText);
+      el.append(img, overlay, label, status, player, playBtn, zoomBtn, face, calFace, browserFrame, roomStateOverlay);
       worldMapEl.appendChild(el);
       const tile = { el, img, overlay, label, status, player, playBtn, zoomBtn, face,
                      hands: { hour: face.querySelector(".hand.hour"), min: face.querySelector(".hand.min"),
                               sec: face.querySelector(".hand.sec") },
                      calendarFace: calFace, calendarKey: null,
                      browserFrame, browserUrl: null,
+                     roomStateOverlay, roomStateText,
                      // 部屋セル内の時計NPCの針(occupant id -> {hour,min,sec})。renderRoomIntoが
                      // セルを作り直すたびに詰め直し、見えている間は毎pollここを見て位相ズレを直す
                      roomClockHands: new Map(),
@@ -1865,6 +1913,7 @@
       tile.calendarKey = null;
       tile.browserUrl = null;
       tile.browserFrame.replaceChildren();
+      tile.roomStateOverlay.hidden = true;
       stopTilePlayback(tile);
     }
 
@@ -1895,6 +1944,9 @@
           tile.status.hidden = true;
           tile.playBtn.hidden = tile.zoomBtn.hidden = true;
           renderRoomInto(tile, lastEntries, selfCharaUrl, null, visible);
+          const stateLabel = ROOM_STATE_LABELS[roomState];
+          tile.roomStateOverlay.hidden = !stateLabel;
+          if (stateLabel) tile.roomStateText.textContent = stateLabel;
         } else if (slot.area.kind === "youtube") {
           renderYouTubeTile(tile, slot.area, focused);
         } else if (slot.area.kind === "clock") {
@@ -2364,6 +2416,10 @@
       if (typeof status.roomImageVersion === "number") {
         scheduleRoomImageRefresh(status.roomImageVersion);
       }
+      if (typeof status.roomState === "string" && status.roomState !== roomState) {
+        roomState = status.roomState;
+        renderWorld();
+      }
     }
 
     // 部屋画像が変わったことをpoll(2秒間隔)で検知したら、全員が同時に1〜2MBの画像を
@@ -2436,6 +2492,7 @@
         bar.id = "adminBar";
         bar.append(
           adminButton("roomImageBtn", "部屋画像を変更", toggleRoomImagePanel),
+          adminButton("roomStateBtn", "ルームの状態", toggleRoomStatePanel),
           adminButton("worldBtn", "ワールド設定", toggleWorldPanel),
           adminButton("npcBtn", "NPC管理", toggleNpcPanel),
         );
@@ -2443,6 +2500,7 @@
       } else if (!isAdmin) {
         existingBar?.remove();
         document.getElementById("roomImagePanel")?.remove();
+        document.getElementById("roomStatePanel")?.remove();
         document.getElementById("worldPanel")?.remove();
         document.getElementById("npcPanel")?.remove();
       }
@@ -2509,6 +2567,49 @@
       roomImageVersion = data.version;
       pendingImageVersion = null;
       selfRoomImageSrc = `/room-image.webp?v=${data.version}`;
+      renderWorld();
+    }
+
+    const ROOM_STATE_OPTIONS = [
+      { value: "normal", label: "通常" },
+      { value: "preparing", label: "準備中" },
+      { value: "closed", label: "Closed" },
+    ];
+
+    // 現在値はpollで既に持っている(roomState)ので、画像一覧と違いサーバーへの問い合わせは不要
+    function toggleRoomStatePanel() {
+      const existingPanel = document.getElementById("roomStatePanel");
+      if (existingPanel) { existingPanel.remove(); return; }
+      const panel = document.createElement("div");
+      panel.id = "roomStatePanel";
+      ROOM_STATE_OPTIONS.forEach(({ value, label }) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        if (value === roomState) btn.classList.add("selected");
+        btn.addEventListener("click", () => applyRoomState(value));
+        panel.appendChild(btn);
+      });
+      roomViewEl.appendChild(panel);
+    }
+
+    async function applyRoomState(state) {
+      const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+      let data;
+      try {
+        const res = await fetch("/admin/room-state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase, state }),
+        });
+        if (!res.ok) { alert("ルームの状態の変更に失敗しました"); return; }
+        data = await res.json();
+      } catch {
+        alert("ルームの状態の変更に失敗しました");
+        return;
+      }
+      document.getElementById("roomStatePanel")?.remove();
+      roomState = data.state;
       renderWorld();
     }
 
