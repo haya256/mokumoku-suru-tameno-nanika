@@ -1070,6 +1070,24 @@
       gap: 6px;
     }
 
+    #viewOnlyRow {
+      flex-wrap: nowrap;
+      justify-content: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: #666;
+    }
+
+    #viewOnlyRow button {
+      padding: 2px 10px;
+      font-size: 0.8rem;
+    }
+
+    form:has(#viewOnlyRow:not([style*="none"])) {
+      padding-top: 4px;
+      padding-bottom: 4px;
+    }
+
     #joinRow, #statusRow {
       flex-wrap: nowrap;
       align-items: stretch;
@@ -1233,7 +1251,11 @@
   </div>
   <div id="messages"></div>
   <form id="form">
-    <div class="row" id="joinRow">
+    <div class="row" id="viewOnlyRow">
+      <span>👀 見る専モード</span>
+      <button type="button" id="goReceptionBtn">受付にいく</button>
+    </div>
+    <div class="row" id="joinRow" style="display: none;">
       <div class="lines">
         <div class="row-line">
           <input id="name" type="text" placeholder="名前">
@@ -1293,6 +1315,8 @@
     const removePendingImageBtn = document.getElementById("removePendingImageBtn");
     const joinRow = document.getElementById("joinRow");
     const statusRow = document.getElementById("statusRow");
+    const viewOnlyRow = document.getElementById("viewOnlyRow");
+    const goReceptionBtn = document.getElementById("goReceptionBtn");
     const myStatusEl = document.getElementById("myStatus");
     const joinBtn = document.getElementById("joinBtn");
     const editBtn = document.getElementById("editBtn");
@@ -1312,6 +1336,7 @@
     const nowPlayingStopBtn = document.getElementById("nowPlayingStopBtn");
 
     let editing = false;
+    let receptionOpen = false;
     let lastEntries = [];
     // マップに置かれたエリアの最新状態(/world の戻り値)。0件なら従来どおり自分のルームの全画面表示。
     // kind="peer" はつながった相手ルーム、kind="youtube" は管理者が置いた動画のマス
@@ -2253,13 +2278,15 @@
       if (mine) {
         const until = mine.end ? `〜${mine.end}` : "〜";
         myStatusEl.textContent = `🟢 ${mine.name}: ルーム${mine.room}でもくもく中(${mine.start}${until}): ${mine.task}`;
+        viewOnlyRow.style.display = "none";
         joinRow.style.display = editing ? "flex" : "none";
         statusRow.style.display = editing ? "none" : "flex";
         joinBtn.textContent = "更新";
         cancelEditBtn.style.display = editing ? "inline-block" : "none";
       } else {
         editing = false;
-        joinRow.style.display = "flex";
+        viewOnlyRow.style.display = receptionOpen ? "none" : "flex";
+        joinRow.style.display = receptionOpen ? "flex" : "none";
         statusRow.style.display = "none";
         joinBtn.textContent = "入室";
         cancelEditBtn.style.display = "none";
@@ -3113,6 +3140,12 @@
       }
     }));
 
+    goReceptionBtn.addEventListener("click", () => {
+      receptionOpen = true;
+      updateMyStatus();
+      nameEl.focus();
+    });
+
     leaveBtn.addEventListener("click", async () => {
       if (!confirm("退室しますか？")) return;
       const result = await postJson("/board/leave", { id: clientId });
@@ -3120,6 +3153,7 @@
       // 退室したら合言葉を覚えたままにしない。次回入室時に必ず聞き直すことで、
       // 同じブラウザでも管理者合言葉に切り替えて入り直せるようにする
       localStorage.removeItem("mokumoku-passphrase");
+      receptionOpen = false;
       taskEl.value = "";
       startEl.value = "";
       endEl.value = "";
