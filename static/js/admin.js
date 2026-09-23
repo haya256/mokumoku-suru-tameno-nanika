@@ -311,7 +311,9 @@ async function changeArea(body) {
   }
   document.getElementById("worldPanel")?.remove();
   await poll();
-  toggleWorldPanel(); // 更新後の一覧を出し直す
+  // 追加したらパネルは閉じたままにして、置いたものをすぐ見られるようにする。
+  // 撤去・差し替えは続けて操作することが多いので、更新後の一覧を出し直す
+  if (body.action !== "add") toggleWorldPanel();
 }
 
 const NPC_ERRORS = {
@@ -437,5 +439,7 @@ async function changeNpc(body) {
   if (data.roomFull) { alert("満室です。NPCを入れる空き部屋がありません"); return; }
   document.getElementById("npcPanel")?.remove();
   await poll();
-  toggleNpcPanel(); // 更新後の一覧を出し直す
+  // 追加したらパネルは閉じたままにして、置いたものをすぐ見られるようにする。
+  // 撤去・差し替えは続けて操作することが多いので、更新後の一覧を出し直す
+  if (body.action !== "add") toggleNpcPanel();
 }
