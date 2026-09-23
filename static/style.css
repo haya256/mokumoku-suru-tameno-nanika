@@ -1,0 +1,1213 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: sans-serif;
+  background: #f5f5f5;
+  display: flex;
+  flex-direction: row;
+  height: 100dvh;
+}
+
+#roomView {
+  position: relative;
+  flex-shrink: 0;
+  align-self: center;
+  width: min(50vw, 100dvh);
+  aspect-ratio: 1 / 1;
+}
+
+/* ワールドマップ: 中央(インデックス4)が自分のルーム、周囲8マスがつながった相手ルーム。
+   focus-modeでは選ばれた1マスだけをグリッド全体に広げてフルサイズ表示する */
+#worldMap {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 3px;
+  /* 未接続のマスとほぼ同色にして、霧の領域がひと続きの土地に見えるようにする */
+  background: #9fa099;
+}
+
+#worldMap.focus-mode { gap: 0; background: none; }
+#worldMap.focus-mode .tile { display: none; }
+
+#worldMap.focus-mode .tile.focused {
+  display: block;
+  grid-column: 1 / 4;
+  grid-row: 1 / 4;
+}
+
+.tile {
+  position: relative;
+  overflow: hidden;
+  background: #eee;
+  cursor: pointer;
+}
+
+.tile.focused, .tile.empty { cursor: default; }
+/* focused中だけアバターがクリック可能(ステータスウィンドウを開ける)なので、その間だけポインタを出す */
+.tile.focused .cell .chara { cursor: pointer; }
+/* 霧のマスでは中身を一切見せない。子要素を個別に列挙すると、エリアの種別を増やしたときに
+   足し忘れて取り残しが出るので(「?」は::afterなのでこの指定では消えない) */
+.tile.empty > * { display: none; }
+
+/* 未接続のマスは「まだ何も無い土地に霧がかかっている」見た目にする。
+   本物の部屋画像と張り合わないよう、彩度もコントラストも低めに抑える */
+.tile.empty {
+  background-color: #a5a69f;
+  background-image:
+    radial-gradient(ellipse 70% 45% at 28% 32%, rgba(255,255,255,0.32), rgba(255,255,255,0) 70%),
+    radial-gradient(ellipse 60% 40% at 74% 72%, rgba(255,255,255,0.24), rgba(255,255,255,0) 70%),
+    repeating-linear-gradient(45deg, rgba(0,0,0,0.02) 0 7px, rgba(0,0,0,0) 7px 14px);
+}
+
+.tile.empty::after {
+  content: "?";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: bold;
+  /* 霧の濃淡に関係なく一定の沈み具合になるよう、色ではなくわずかな黒を重ねる。
+     ぼかすと輪郭が広がって薄く見えるぶん、不透明度は少し上げてある */
+  color: rgba(0, 0, 0, 0.13);
+  filter: blur(1px);
+}
+
+.tile > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+/* 中継画像がまだ届いていない間(404)に壊れた画像アイコンを出さない */
+.tile > img.missing { visibility: hidden; }
+.tile.offline > img { filter: grayscale(1); opacity: 0.35; }
+
+/* YouTubeエリア。サムネは16:9なので正方形のマスに素直に入れると縦に伸びる。
+   containで上下中央に収めると、再生後のプレイヤー(同じく16:9)とぴったり同じ帯に乗る。
+   ドット絵用のpixelatedも実写には効かせない */
+.tile.youtube {
+  background: #111;
+}
+
+.tile.youtube > img {
+  object-fit: contain;
+  image-rendering: auto;
+  opacity: 0.85;
+}
+
+/* 9部屋のグリッドはinset:0の透明レイヤーなので、残しているとプレイヤーの操作を奪う */
+.tile.youtube > .room-overlay { display: none; }
+/* 再生中はマス名がYouTubeのコントロールバーと重なる */
+.tile.youtube.playing > .tile-label { display: none; }
+
+/* 時計エリア。霧のマス(#a5a69f)と同系の低彩度にして、ピクセルアートの部屋と並んでも浮かせない
+   (.tile 既定の #eee のままだと真っ白で目立ちすぎる) */
+.tile.clock {
+  background: #8f9a91;
+}
+
+/* 前のエリアの残骸を消す。resetTile() は img の src を外していないので部屋画像やサムネが
+   文字盤の裏に残り、.room-overlay は inset:0 の透明レイヤーなのでキャラが載ったままになる */
+.tile.clock > img, .tile.clock > .room-overlay { display: none; }
+
+/* 既定で隠し、時計のマスのときだけ出す。こうしておくと種別が入れ替わったときに
+   JSを1行も足さずに文字盤が消える(.tile.empty > * と同じ考え方) */
+.clock-face { display: none; }
+
+.tile.clock > .clock-face {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* マスのクリック(拡大)を邪魔しない。.tile-label と同じ */
+  pointer-events: none;
+}
+
+/* 針の回転。transform ではなく rotate プロパティを使うのは、transform を丸ごと
+   上書きせず合成できることと、getComputedStyle で "78deg" と読めて検証しやすいため
+   (transform だと matrix になる) */
+@keyframes clock-spin { from { rotate: 0deg; } to { rotate: 360deg; } }
+
+.clock-face .hand {
+  transform-box: view-box;   /* 既定値のエンジン差でハマるので明示する */
+  transform-origin: 50px 45px;
+}
+
+/* 秒針の steps(60) は既定の jump-end であることが正しさの根拠。start にすると
+   丸ごと1秒進んだ時計になる。位相は syncClockHands() が負の animation-delay で合わせる */
+.clock-face .hand.sec  { animation: clock-spin 60s    steps(60) infinite; }
+.clock-face .hand.min  { animation: clock-spin 3600s  linear    infinite; }
+.clock-face .hand.hour { animation: clock-spin 43200s linear    infinite; }
+
+/* 数字は小さいマスだと7〜8pxに潰れるので、拡大したマスだけで出す(.cell .badge と同じ流儀) */
+.clock-face .numeral { display: none; }
+.tile.focused .clock-face .numeral { display: block; }
+
+/* 秒針は周辺視野で1秒ごとに動き続けるので、動きを減らす設定では隠す。
+   animation: none は禁止(animation-name が変わると位相がリセットされる)、
+   display: none も避ける(アニメーションが破棄され、設定を戻したとき古い位相で復活する)。
+   visibility なら裏で回り続けるので、いつ戻しても正しい位置にいる。
+   分針と時針は事実上静止して見えるので残し、分まで読める時計として機能を保つ */
+@media (prefers-reduced-motion: reduce) {
+  .clock-face .hand.sec { visibility: hidden; }
+}
+
+/* 時計NPC: 上の時計エリアと同じ.clock-face/CLOCK_FACE_SVGを再利用し、部屋の1マス(.cell)に
+   小さく出す。.tile.focused .clock-face .numeral という既存の数字表示トグルは.tileとの
+   祖先子孫関係だけを見ているのでここでも無改修で効く。上書きが要るのは「既定で非表示」と
+   「タイル全体基準の絶対配置・大きさ」の2点だけ(.tile.clock > .clock-face の
+   pointer-events:none は子コンビネータ限定で部屋タイルにはそもそもマッチしない) */
+.cell .clock-face {
+  display: block;
+  position: static;
+  inset: auto;
+  width: 60%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  pointer-events: auto;
+}
+
+/* 拡大時は.tile.focused .cell .chara/.calendar-faceと対になる形で幅を広げる */
+.tile.focused .cell .clock-face { width: 90%; cursor: pointer; }
+
+/* YouTube NPC: 部屋のマスには静的なサムネイルを置き、拡大時だけ現れる▶ボタンを押すと
+   その場でiframeを埋め込んで再生する(ワールドマップのYouTubeエリアと同じ「押すまで
+   再生しない」原則)。ステータスウィンドウでも同じ動画を確認できる */
+.cell .npc-youtube-thumb {
+  position: relative;
+  width: 70%;
+  aspect-ratio: 16 / 9;
+  background-color: #111;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid #000;
+  border-radius: 4px;
+}
+.tile.focused .cell .npc-youtube-thumb { width: 92%; cursor: pointer; }
+
+/* ▶ボタンは未拡大では小さすぎて押せないので、拡大したマスだけで出す(.cell .badgeと同じ流儀) */
+.cell .npc-youtube-play { display: none; }
+.tile.focused .cell .npc-youtube-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* 再生中のセル。buildYouTubeEmbed()の.yt-embed(チャット用の余白/最大幅)を打ち消して
+   セルいっぱいに広げる */
+.cell .npc-youtube-playing {
+  position: relative;
+  width: 92%;
+  aspect-ratio: 16 / 9;
+  background: #111;
+}
+.cell .npc-youtube-playing .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
+
+/* カレンダーエリア。時計(#8f9a91、寒色寄り)と隣り合っても種別の違いが色でも分かるよう、
+   同じ低彩度でも暖色寄り(紙のような色)にずらす */
+.tile.calendar { background: #a08f7c; }
+
+/* 前のエリアの残骸を消す。時計と同じ理由(resetTileはimg/room-overlayを個別に隠さない) */
+.tile.calendar > img, .tile.calendar > .room-overlay { display: none; }
+
+/* 既定で隠し、カレンダーのマスのときだけ出す(.tile.empty > * / .clock-face と同じ考え方) */
+.calendar-face { display: none; }
+
+.tile.calendar > .calendar-face {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  /* マスのクリック(拡大)を邪魔しない。.tile-label と同じ */
+  pointer-events: none;
+  color: #3b4252;
+}
+
+/* 未拡大: 年月(西暦+和暦併記)+日付の数字+曜日。拡大: 月グリッド。
+   時計のnumeralと同じ「小さいマスでは省略」の流儀だが、カレンダーは「今日が何年何月何日か」
+   まで出したいという要望に合わせ、未拡大でも年月情報を残す(時計の文字盤より情報量は多い) */
+.calendar-face .cal-full { display: none; }
+.tile.focused .calendar-face .cal-compact { display: none; }
+.tile.focused .calendar-face .cal-full { display: flex; flex-direction: column; width: 88%; }
+
+.calendar-face .cal-compact { display: flex; flex-direction: column; align-items: center; }
+/* vwベースはタイル自体が min(50vw,100dvh)/3 で伸縮するので、他の要素(.tile-play等)と
+   同じ考え方でclamp()にして極端に小さい画面でもマスからはみ出させない */
+.calendar-face .cal-yearmonth { font-size: clamp(0.5rem, 2.2vw, 0.75rem); text-align: center; line-height: 1.2; }
+.calendar-face .cal-daynum { font-size: clamp(1.6rem, 6vw, 2.4rem); font-weight: bold; line-height: 1.1; }
+.calendar-face .cal-weekday-solo { font-size: clamp(0.55rem, 2vw, 0.9rem); margin-top: 0.1em; }
+
+.calendar-face .cal-month { text-align: center; font-weight: bold; margin-bottom: 0.3em; }
+.calendar-face .cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  font-size: 0.85rem;
+  text-align: center;
+}
+.calendar-face .cal-weekday { font-weight: bold; opacity: 0.7; }
+/* 「今日」だけ強調。既存の入室ボタンの緑(#2a7)を流用して新色を増やさない */
+.calendar-face .cal-day.today { background: #2a7; color: #fff; border-radius: 50%; }
+
+/* カレンダーNPC: 上のカレンダーエリアと同じ.calendar-face/buildCalendarFaceHTML()を再利用し、
+   部屋の1マス(.cell)に小さく出す。.tile.focused .calendar-face .cal-compact/.cal-full という
+   既存のトグルは.tileとの祖先子孫関係だけを見ているのでここでも無改修で効く。
+   上書きが要るのは「既定で非表示」と「タイル全体基準で大きすぎるフォント」の2点だけ
+   (.tile.calendar > .calendar-face の pointer-events:none は子コンビネータ限定で部屋タイルには
+   そもそもマッチしないため、クリックを妨げる心配はない) */
+.cell .calendar-face {
+  display: flex;
+  position: static;
+  inset: auto;
+  width: 60%;
+  aspect-ratio: 2 / 3;
+  background: #a08f7c;
+  border-radius: 8%;
+  color: #3b4252;
+  pointer-events: auto;
+}
+.cell .calendar-face .cal-yearmonth { font-size: 0.4rem; line-height: 1.1; }
+.cell .calendar-face .cal-daynum { font-size: 1.1rem; line-height: 1.1; }
+.cell .calendar-face .cal-weekday-solo { font-size: 0.42rem; }
+
+/* 拡大時は.tile.focused .cell .chara(57行目)と対になる形で幅を広げ、クリック可能を示す */
+.tile.focused .cell .calendar-face { width: 90%; aspect-ratio: auto; cursor: pointer; }
+.tile.focused .cell .calendar-face .cal-grid { font-size: 0.6rem; gap: 1px; }
+.tile.focused .cell .calendar-face .cal-month { font-size: 0.55rem; }
+
+/* ブラウザエリア。iframeが読み込まれるまでの一瞬だけ見える背景 */
+.tile.browser { background: #cbd3d8; }
+.tile.browser > img, .tile.browser > .room-overlay { display: none; }
+
+.browser-frame { display: none; }
+.tile.browser > .browser-frame {
+  display: block;
+  position: absolute;
+  inset: 0;
+  /* z-indexを明示しない: .tile-label(z-index:1)が既定で明示的スタッキングレベルを持つため、
+     こちらを無指定(auto)にしておけば横のDOM順に関係なく常にlabelが上に来る。
+     YouTubeのように再生中だけラベルを隠す特別扱いは不要 */
+}
+.browser-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+/* 未拡大時はクリックをタイル本体(拡大操作)に通す。iframe自体にpointer-events:noneを
+   当てるだけで、中の埋め込み先が何をしていようと親のヒットテストには一切参加しなくなる。
+   拡大したときだけ操作可能にする */
+.browser-frame iframe { pointer-events: none; }
+.tile.focused.browser .browser-frame iframe { pointer-events: auto; }
+
+/* 正方形のマスに16:9を上下中央で収める。マス全体に広げるとYouTube側が黒帯を作り、
+   コントロールバーが映像から離れて間延びして見える */
+.tile-player {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  transform: translateY(-50%);
+  z-index: 2;
+}
+
+.tile-player[hidden] { display: none; }
+
+/* 中身はチャット欄と同じ buildYouTubeEmbed() の .yt-embed。あちらは本文に馴染むよう
+   max-width と余白を持っているので、マスいっぱいに広げるために打ち消す
+   (小さいマスでは幅が360px未満で気づかないが、拡大すると頭打ちになって左上に取り残される) */
+.tile-player > .yt-embed {
+  max-width: none;
+  margin-top: 0;
+  height: 100%;
+}
+
+.tile-player > .yt-embed iframe { border-radius: 0; }
+
+.tile-play {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  color: #fff;
+  font-size: clamp(1.4rem, 4vw, 3rem);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+  cursor: pointer;
+}
+
+.tile-play:hover { color: #f55; }
+
+.tile-zoom {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.tile-zoom:hover { background: rgba(0, 0, 0, 0.8); }
+
+/* display を指定した要素は hidden 属性が効かなくなる(.tile-status と同じ罠) */
+.tile-play[hidden], .tile-zoom[hidden] { display: none; }
+
+#nowPlayingBar {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.75rem;
+}
+
+#nowPlayingBar[hidden] { display: none; }
+
+#nowPlayingLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#nowPlayingBar button {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.85);
+  color: #333;
+  border: 0;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+#nowPlayingBar button:hover { background: #fff; }
+
+/* 上端は「← マップへ」と管理者ボタンが占めるので、ルーム名は下端に置く
+   (キャラは下端から14%の位置に立つので重ならない) */
+.tile-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.tile.focused .tile-label { font-size: 0.85rem; }
+#worldMap:not(.focus-mode) .tile.self .tile-label { background: rgba(40, 90, 60, 0.7); }
+/* 自分のルームを拡大しているときは従来の全画面表示と同じ見た目にする */
+#worldMap.focus-mode .tile.self .tile-label { display: none; }
+
+.tile-status {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.55);
+  color: #666;
+  font-size: 0.7rem;
+  pointer-events: none;
+}
+
+/* displayを指定した時点でブラウザ既定の [hidden]{display:none} を上書きしてしまうので、
+   hidden属性を効かせるには自分で打ち消す必要がある */
+.tile-status[hidden] { display: none; }
+
+/* 管理者が「準備中/Closed」にしたときの演出。電気を消したような暗さ+すりガラス越し。
+   pointer-events: none であくまで見た目だけにし、下のアバターや拡大操作は妨げない */
+.tile-room-state {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 16, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: bold;
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+  text-align: center;
+  white-space: pre-line; /* テキスト中の\nを改行として表示するため */
+  padding: 0 10%;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+.tile-room-state[hidden] { display: none; }
+.tile.focused .tile-room-state { font-size: 1.4rem; }
+
+#backToMapBtn, #adminBar button {
+  background: rgba(255,255,255,0.85);
+  color: #333;
+  border: 1px solid #999;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+#backToMapBtn:hover, #adminBar button:hover { background: #fff; }
+
+#backToMapBtn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+}
+
+#adminBar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+}
+
+/* 部屋画像の差し替えは自分のルームを見ているときだけ意味があるので、そのときだけ出す */
+#roomImageBtn { display: none; }
+#roomView.showing-self #roomImageBtn { display: block; }
+
+#roomImagePanel, #worldPanel, #npcPanel, #roomStatePanel {
+  position: absolute;
+  top: 36px;
+  right: 8px;
+  z-index: 5;
+  background: #fff;
+  border: 1px solid #999;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+}
+
+#roomImagePanel img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  cursor: pointer;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  image-rendering: pixelated;
+}
+
+#roomImagePanel img.selected { border-color: #3a3; }
+#roomImagePanel img:hover { opacity: 0.85; }
+
+#roomStatePanel button {
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: #eee;
+  color: #333;
+  cursor: pointer;
+}
+#roomStatePanel button.selected { border-color: #3a3; background: #dfd; }
+#roomStatePanel button:hover { opacity: 0.85; }
+
+#worldPanel, #npcPanel {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  width: min(320px, calc(100% - 16px));
+  font-size: 0.8rem;
+}
+
+#worldPanel .peer-row, #npcPanel .peer-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* YouTubeルームの動画差し替え欄。名前と「片付ける」の下に丸ごと折り返す */
+#worldPanel .peer-swap {
+  flex-basis: 100%;
+  display: flex;
+  gap: 6px;
+}
+
+#worldPanel .peer-swap input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+}
+
+#worldPanel .peer-swap button { flex-shrink: 0; font-size: 0.75rem; }
+
+#worldPanel .peer-info, #npcPanel .peer-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#worldPanel .peer-empty, #npcPanel .peer-empty { color: #aaa; }
+
+#worldPanel .peer-del, #npcPanel .peer-del {
+  flex-shrink: 0;
+  background: #fff;
+  color: #c33;
+  border: 1px solid #c33;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+}
+
+#worldPanel .peer-del:hover, #npcPanel .peer-del:hover { background: #fee; }
+
+#worldPanel .peer-add, #npcPanel .peer-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px dashed #ccc;
+  padding-top: 8px;
+}
+
+#worldPanel .peer-add input, #worldPanel .peer-add select,
+#npcPanel .peer-add input, #npcPanel .peer-add select { font-size: 0.8rem; }
+#worldPanel .peer-add button, #npcPanel .peer-add button { padding: 5px 10px; font-size: 0.8rem; }
+
+/* アバタークリックで開くステータスウィンドウ(ドラクエ風の紺色ウィンドウ)。
+   画面全体ではなく#roomView(マップ側)の中央に出したいので、position:fixedではなく
+   #roomView(position:relative)を基準にしたposition:absoluteで配置する。
+   トグルパネルと違いモーダルなので、既存最大z-index(5)より確実に上に出す */
+#charaStatusOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+#charaStatusOverlay[hidden] { display: none; }
+
+#charaStatusWindow {
+  position: relative;
+  width: min(480px, 100%);
+  background: #10186a;
+  color: #fff;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px #10186a, 0 0 0 6px #fff; /* 白の二重線ピクセル枠 */
+  padding: 20px 16px 14px;
+  font-size: 0.9rem;
+}
+
+#charaStatusNamePlate {
+  position: absolute;
+  top: -14px;
+  left: 20px;
+  background: #10186a;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 3px #10186a, 0 0 0 6px #fff;
+  padding: 2px 16px;
+  font-weight: bold;
+}
+
+#charaStatusBody { display: flex; gap: 14px; margin-top: 6px; }
+#charaStatusText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+#charaStatusText .row { display: flex; gap: 8px; }
+#charaStatusText .label { color: #ffd76b; flex-shrink: 0; }
+#charaStatusText .value { word-break: break-word; }
+
+/* カレンダーNPCのステータスウィンドウ内表示。buildCalendarGrid()の出力(cal-month/cal-grid)を
+   そのまま流し込むだけなので(cal-compact/cal-fullのトグルは使わない)、読みやすい大きさにする */
+#charaStatusText .calendar-face { display: block; color: #fff; }
+#charaStatusText .calendar-face .cal-month { font-size: 1rem; margin-bottom: 6px; }
+#charaStatusText .calendar-face .cal-grid { font-size: 0.95rem; gap: 4px; }
+#charaStatusText .calendar-face .cal-weekday { opacity: 0.8; }
+
+/* 時計NPCのステータスウィンドウ内表示。数字は.tile.focusedという祖先が無いと出ないので、
+   ここでは常時表示に上書きする */
+#charaStatusText .clock-face { display: block; width: 140px; margin: 0 auto; }
+#charaStatusText .clock-face .numeral { display: block; }
+
+/* YouTube NPCのステータスウィンドウ内再生ステージ。押すまではサムネ+▶、
+   押すとbuildYouTubeEmbed()の.yt-embedに差し替わる(チャット用の余白/最大幅は
+   ステージ内では打ち消してぴったり収める) */
+#charaStatusText .status-yt-stage {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 16 / 9;
+  background: #111;
+}
+#charaStatusText .status-yt-stage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#charaStatusText .status-yt-stage .status-yt-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+#charaStatusText .status-yt-stage .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
+
+#charaStatusCloseBtn {
+  display: block;
+  margin: 14px 0 0 auto;
+  background: #10186a;
+  color: #fff;
+  border: 2px solid #fff;
+  padding: 4px 14px;
+  cursor: pointer;
+}
+#charaStatusCloseBtn:hover { background: #223bd0; }
+
+@media (max-width: 800px) {
+  #charaStatusBody { flex-direction: column; align-items: center; text-align: left; }
+}
+
+.room-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* NPC種別ごとに画像の縦横比が違っても中心の高さが揃うよう、下端でなく中心で
+     そろえる。top/bottomを非対称にすることで中心を部屋の中央よりちょい下にずらす */
+  padding-top: 12%;
+  padding-bottom: 6%;
+}
+
+/* 上段(ルーム1,2,3)は部屋画像の壁が他の行より高く描かれていて中心がやや高く見えるので、
+   画像の種類によらず一律で少し下げる */
+.cell:nth-child(-n+3) {
+  padding-top: 18%;
+  padding-bottom: 0%;
+}
+
+/* 縮小表示のマスでは名前バッジが部屋に対して大きすぎるので、拡大したマスだけで出す
+   (バッジは絶対配置(745行)で.cellのflexレイアウトに参加しないので、ここでの
+   padding調整は不要) */
+.cell .badge { display: none; }
+.tile.focused .cell .badge { display: block; }
+
+/* キャラクターのスプライトシート: 9列×6行。1キャラ=3列×2行(6ポーズ)のブロックが部屋と同じ3×3配置。
+   #charaStatusPortrait(ステータスウィンドウの肖像)は同じクロップ技術を大きいサイズで使い回すため
+   ここに相乗りさせる(background-sizeが%指定なので要素サイズが変わってもクロップ結果は崩れない) */
+.cell .chara, #charaStatusPortrait {
+  width: 33%;
+  aspect-ratio: 2 / 3;
+  background-image: url("/chara-image.png");
+  background-size: 900% 600%;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  animation: bob 2s steps(1, end) infinite;
+}
+
+/* アップロードされたカスタム画像はスプライトでなく1枚絵として表示 */
+.cell .chara.custom, #charaStatusPortrait.custom {
+  background-size: contain;
+  background-position: center;
+  image-rendering: auto;
+}
+
+/* ステータスウィンドウの肖像はタイル内アバターより大きい固定サイズにする(aspect-ratioは共有のまま) */
+#charaStatusPortrait {
+  width: clamp(96px, 30vw, 140px);
+  flex-shrink: 0;
+  border: 2px solid #fff;
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.cell .badge {
+  position: absolute;
+  bottom: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 0.85rem;
+  font-weight: bold;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 上段(ルーム1,2,3)はキャラ本体と同じ理由で名前プレートも少し下げる */
+.cell:nth-child(-n+3) .badge {
+  bottom: 1%;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100dvh;
+}
+
+@media (max-width: 800px) {
+  body {
+    flex-direction: column;
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  #roomView {
+    width: 100%;
+    align-self: auto;
+  }
+
+  #main {
+    height: auto;
+    flex: 1;
+  }
+}
+
+header {
+  background: #333;
+  color: #fff;
+  padding: 12px 16px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#discordStatus {
+  font-size: 0.75rem;
+  font-weight: normal;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #555;
+  color: #ccc;
+}
+
+#discordStatus.on {
+  background: #2e7d32;
+  color: #fff;
+}
+
+#discordStatus.error {
+  background: #b71c1c;
+  color: #fff;
+}
+
+#board {
+  background: #fff;
+  border-bottom: 2px dashed #bbb;
+  padding: 10px 16px;
+  max-height: 30dvh;
+  overflow-y: auto;
+}
+
+#board h2 {
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 6px;
+}
+
+#board .empty {
+  font-size: 0.85rem;
+  color: #aaa;
+}
+
+.entry {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 0.9rem;
+}
+
+.entry .room {
+  background: #333;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.entry .who {
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.entry .when {
+  color: #888;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.entry .what {
+  word-break: break-word;
+  flex: 1;
+}
+
+.entry .kick {
+  flex-shrink: 0;
+  background: #fff;
+  color: #c33;
+  border: 1px solid #c33;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.entry .kick:hover {
+  background: #fee;
+}
+
+/* つながった相手ルーム由来の行・発言は、自分のルームのものと色で区別する */
+.entry.remote .room { background: #4a6b8a; }
+
+.msg.remote { border-left: 3px solid #4a6b8a; }
+.msg.system.remote { border-left: none; }
+
+.msg .from {
+  display: inline-block;
+  background: #4a6b8a;
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 5px;
+  margin-right: 5px;
+  font-size: 0.7rem;
+  font-weight: normal;
+}
+
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg {
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  max-width: 480px;
+  flex-shrink: 0;
+}
+
+.msg .meta {
+  font-size: 0.75rem;
+  color: #888;
+  margin-bottom: 2px;
+}
+
+.msg .meta span {
+  font-weight: bold;
+  color: #333;
+}
+
+.msg .text {
+  font-size: 0.95rem;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.msg .text a { color: #2a5db0; word-break: break-all; }
+.msg .text a:hover { text-decoration: none; }
+
+.yt-embed {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 16 / 9;
+  margin-top: 6px;
+}
+.yt-embed iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 6px;
+}
+
+.msg .image {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  margin-top: 6px;
+}
+
+#pendingImageRow {
+  align-items: center;
+  gap: 8px;
+}
+#pendingImagePreview {
+  max-height: 48px;
+  max-width: 96px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.msg.system {
+  background: none;
+  border-radius: 0;
+  align-self: center;
+  /* 中央寄せなので、はみ出すと左右とも切れてしまう。幅を抑えて末尾だけ「…」にする */
+  max-width: 100%;
+  padding: 2px 12px;
+  font-size: 0.8rem;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg.system .stamp {
+  opacity: 0.7;
+  margin-right: 6px;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fff;
+  border-top: 1px solid #ddd;
+}
+
+form .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 8px;
+  align-items: center;
+}
+
+.row label {
+  font-size: 0.8rem;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#viewOnlyRow {
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+#viewOnlyRow button {
+  padding: 2px 10px;
+  font-size: 0.8rem;
+}
+
+form:has(#viewOnlyRow:not([style*="none"])) {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#joinRow, #statusRow {
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.row-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 8px;
+  align-items: center;
+}
+
+.tall-btn {
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: 90px;
+  font-size: 1.05rem;
+}
+
+input[type="time"] {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 7px 6px;
+  font-size: 0.9rem;
+  outline: none;
+}
+
+input[type="text"], textarea {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  outline: none;
+}
+
+input[type="text"]:focus, textarea:focus {
+  border-color: #555;
+}
+
+input[type="file"] {
+  font-size: 0.8rem;
+}
+
+textarea {
+  font-family: inherit;
+  line-height: 1.4;
+  resize: none;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+#name { width: 100px; flex-shrink: 0; }
+#text { flex: 1; }
+#task { flex: 1; min-width: 0; }
+
+button {
+  background: #333;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+button:hover { background: #555; }
+
+#joinBtn {
+  background: #2a7;
+  flex-shrink: 0;
+}
+
+#joinBtn:hover { background: #3b8; }
+
+#editBtn { flex-shrink: 0; }
+
+#cancelEditBtn {
+  background: #fff;
+  color: #888;
+  border: 1px solid #ccc;
+  flex-shrink: 0;
+}
+
+#cancelEditBtn:hover { background: #eee; }
+
+#recordLabel {
+  font-size: 0.85rem;
+  color: #555;
+  flex-shrink: 0;
+}
+
+#recordText {
+  flex: 1;
+  min-width: 0;
+  background: #f8f8f8;
+  font-size: 0.85rem;
+}
+
+#copyBtn { flex-shrink: 0; }
+
+#closeRecordBtn {
+  background: #fff;
+  color: #888;
+  border: 1px solid #ccc;
+  flex-shrink: 0;
+}
+
+#closeRecordBtn:hover { background: #eee; }
+
+#leaveBtn {
+  background: #fff;
+  color: #c33;
+  border: 1px solid #c33;
+  flex-shrink: 0;
+}
+
+#leaveBtn:hover { background: #fee; }
+
+#myStatus {
+  font-size: 0.9rem;
+}
