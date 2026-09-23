@@ -16,8 +16,10 @@ function renderBoard(entries) {
   rows.forEach(({ e, room, local }) => {
     const div = document.createElement("div");
     div.className = local ? "entry" : "entry remote";
-    const when = `${esc(e.start)}〜${esc(e.end || "?")}`;
-    div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span><span class="when">${when}</span><span class="what">${esc(e.task)}</span>`;
+    // 時計やカレンダーなどの置き物NPCは開始・終了時刻を持たないので、時間欄ごと出さない
+    const when = occupantKind(e.kind).hasSchedule
+      ? `<span class="when">${esc(e.start)}〜${esc(e.end || "?")}</span>` : "";
+    div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span>${when}<span class="what">${esc(e.task)}</span>`;
     // 相手サーバーの参加者は操作できないので強制退出ボタンは出さない。
     // NPCの片付けは強制退出とは別のライフサイクル(NPC管理パネル)で行うのでここには出さない
     if (local && isAdmin && e.id !== clientId && !e.npc) {

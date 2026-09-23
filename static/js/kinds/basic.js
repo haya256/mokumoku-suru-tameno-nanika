@@ -2,6 +2,8 @@
 // kind未指定の住人や知らない種別もここにフォールバックする(occupantKind参照)
 registerKind({
   key: "basic",
+  // 開始・終了時刻を持つ(在室者一覧に出す)。時計やカレンダーなどの置き物NPCには無い
+  hasSchedule: true,
 
   renderCell(cell, o, { tile, roomLabel, charaUrl }) {
     const chara = document.createElement("div");
