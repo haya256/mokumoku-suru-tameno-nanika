@@ -1,5 +1,5 @@
-from kinds.base import Kind, KindError, Prepared, clean_name
-from media import decode_chara_image
+from mokumoku.kinds.base import Kind, KindError, Prepared, clean_name
+from mokumoku.media import decode_chara_image
 
 
 # 基本NPC: 名前・やること・画像(任意)を管理者がその都度自由入力する。部屋の中にだけ置ける

@@ -1,4 +1,4 @@
-from kinds.base import Kind
+from mokumoku.kinds.base import Kind
 
 
 # カレンダー: 時計と同じくサーバーが持つのは名前だけ。日付は見ている人のブラウザの

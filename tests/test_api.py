@@ -1,6 +1,8 @@
 import pytest
 
 from conftest import ADMIN_PASSPHRASE, PASSPHRASE
+from mokumoku import peers, state
+from mokumoku.areas import MAX_AREAS
 
 
 def join(client, cid="u1", name="たろう", task="読書", passphrase=PASSPHRASE):
@@ -117,13 +119,13 @@ def test_area_unknown_kind(client):
     assert admin_post(client, "/admin/area", action="add", kind="basic", name="a", task="b").status_code == 400
 
 
-def test_poll_refetches_lost_thumbnail(client, server):
+def test_poll_refetches_lost_thumbnail(client):
     # 再起動でメモリ上のサムネが消えた状態を再現し、巡回で取り直されることを確かめる
     area_id = admin_post(client, "/admin/area", action="add", kind="youtube",
                          url="https://youtu.be/dQw4w9WgXcQ").get_json()["area"]["id"]
-    server.area_images.clear()
+    state.area_images.clear()
     assert client.get(f"/area-image/{area_id}").status_code == 404
-    server.poll_peers_once()
+    peers.poll_peers_once()
     res = client.get(f"/area-image/{area_id}")
     assert res.status_code == 200 and res.mimetype == "image/jpeg"
 
@@ -134,11 +136,11 @@ def test_area_peer_duplicate(client):
     assert res.status_code == 400
 
 
-def test_area_limit(client, server):
-    for i in range(server.MAX_AREAS):
+def test_area_limit(client):
+    for i in range(MAX_AREAS):
         assert admin_post(client, "/admin/area", action="add", kind="clock", name=f"c{i}").status_code == 200
     slots = {a["slot"] for a in client.get("/world").get_json()["areas"]}
-    assert slots == set(range(server.MAX_AREAS))
+    assert slots == set(range(MAX_AREAS))
     assert admin_post(client, "/admin/area", action="add", kind="clock").status_code == 400
 
 
@@ -163,7 +165,7 @@ NPC_CASES = [
 
 
 @pytest.mark.parametrize("body", NPC_CASES, ids=[c["kind"] for c in NPC_CASES])
-def test_npc_add_and_remove(client, server, body):
+def test_npc_add_and_remove(client, body):
     res = admin_post(client, "/admin/npc", action="add", **body)
     assert res.status_code == 201, res.get_json()
     npc = res.get_json()["npc"]
@@ -175,7 +177,7 @@ def test_npc_add_and_remove(client, server, body):
 
     assert admin_post(client, "/admin/npc", action="remove", id=npc["id"]).status_code == 200
     assert client.get("/board").get_json() == []
-    assert npc["id"] not in server.npc_images
+    assert npc["id"] not in state.npc_images
 
 
 def test_npc_invalid(client):

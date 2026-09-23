@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 
 class KindError(Exception):
-    """管理者の入力が不正なときに投げる。server.py側で {"error": code} の400応答に変換される"""
+    """管理者の入力が不正なときに投げる。routes/ 側で {"error": code} の400応答に変換される"""
 
     def __init__(self, code):
         super().__init__(code)

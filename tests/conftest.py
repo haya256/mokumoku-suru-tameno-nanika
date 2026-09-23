@@ -5,6 +5,7 @@ import sys
 import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO_ROOT)
 PASSPHRASE = "もくもく"
 ADMIN_PASSPHRASE = "かんりしゃ"
 FAKE_JPEG = b"\xff\xd8fake-jpeg"
@@ -33,24 +34,21 @@ def server(tmp_path_factory):
     (workdir / "config" / "settings.json").write_text(json.dumps({"security": {"mode": "very_easy"}}), encoding="utf-8")
     (workdir / "assets").mkdir()
     os.chdir(workdir)
-    sys.path.insert(0, REPO_ROOT)
-    import kinds.browser
-    import net
+    import mokumoku.kinds.browser
     import server as srv
+    from mokumoku import net
     net.fetch_bytes = _fake_fetch_bytes
     net.fetch_json = _fake_fetch_json
-    kinds.browser.check_iframe_embeddable = lambda url: True
+    mokumoku.kinds.browser.check_iframe_embeddable = lambda url: True
     return srv
 
 
 # テストごとにメモリ上の状態とエリア設定を空に戻す
 @pytest.fixture
 def client(server):
-    server.messages.clear()
-    server.board.clear()
-    server.custom_images.clear()
-    server.npc_images.clear()
-    server.message_images.clear()
-    server.area_images.clear()
-    server.update_settings(lambda s: s.setdefault("world", {}).update({"areas": []}))
+    from mokumoku import settings, state
+    for store in (state.messages, state.board, state.custom_images, state.npc_images,
+                  state.message_images, state.area_images):
+        store.clear()
+    settings.update_settings(lambda s: s.setdefault("world", {}).update({"areas": []}))
     return server.app.test_client()

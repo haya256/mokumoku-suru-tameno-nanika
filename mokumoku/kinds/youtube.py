@@ -1,9 +1,9 @@
 import re
 import urllib.parse
 
-import net
-from kinds.base import Kind, KindError, Prepared, clean_name
-from media import JPEG_MAGIC
+from mokumoku import net
+from mokumoku.kinds.base import Kind, KindError, Prepared, clean_name
+from mokumoku.media import JPEG_MAGIC
 
 # 動画IDは必ずASCII限定で検証する。Pythonの \w はUnicodeマッチなので全角文字が通ってしまう
 YOUTUBE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{11}")

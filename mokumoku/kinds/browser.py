@@ -2,8 +2,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import net
-from kinds.base import Kind, KindError, Prepared, clean_name
+from mokumoku import net
+from mokumoku.kinds.base import Kind, KindError, Prepared, clean_name
 
 
 # ブラウザ用。peerと違い任意のページを指すのでパス・クエリ・フラグメントを許可する

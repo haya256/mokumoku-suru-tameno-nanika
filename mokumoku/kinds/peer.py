@@ -1,6 +1,6 @@
 import urllib.parse
 
-from kinds.base import Kind, KindError, Prepared, clean_name
+from mokumoku.kinds.base import Kind, KindError, Prepared, clean_name
 
 PEER_TYPES = ("native", "fork")  # native: このリポジトリ系統(Flask+ポーリング) / fork: elm200版(FastAPI+Redis+SSE)
 
@@ -16,7 +16,7 @@ def normalize_peer_url(url):
     return url
 
 
-# ピア: 他のもくもくルーム。相手の在室者・チャット・部屋画像は巡回スレッド(server.py)が取りに行く。
+# ピア: 他のもくもくルーム。相手の在室者・チャット・部屋画像は巡回スレッド(peers.py)が取りに行く。
 # 未認証で開ける/worldには相手のURLを出さない(表示名とnetlocまで)
 class PeerKind(Kind):
     key = "peer"

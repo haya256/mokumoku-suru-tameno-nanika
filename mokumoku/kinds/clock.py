@@ -1,4 +1,4 @@
-from kinds.base import Kind
+from mokumoku.kinds.base import Kind
 
 
 # 時計: サーバーが持つのは名前だけ。時刻は見ている人のブラウザのローカル時刻を
