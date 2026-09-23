@@ -285,14 +285,67 @@ body {
   color: #3b4252;
   pointer-events: auto;
 }
-.cell .calendar-face .cal-yearmonth { font-size: 0.4rem; line-height: 1.1; }
-.cell .calendar-face .cal-daynum { font-size: 1.1rem; line-height: 1.1; }
-.cell .calendar-face .cal-weekday-solo { font-size: 0.42rem; }
 
 /* 拡大時は.tile.focused .cell .chara(57行目)と対になる形で幅を広げ、クリック可能を示す */
 .tile.focused .cell .calendar-face { width: 90%; aspect-ratio: auto; cursor: pointer; }
-.tile.focused .cell .calendar-face .cal-grid { font-size: 0.6rem; gap: 1px; }
-.tile.focused .cell .calendar-face .cal-month { font-size: 0.55rem; }
+
+/* カレンダーNPCは部屋の中では常に日めくり(今日1日だけ)。月グリッドはクリックで開く
+   ステータスウィンドウで見せる。紙そのものは.cal-tearoffが描くので、外側の茶色い台紙は消す */
+.cell .calendar-face.tearoff { background: none; border-radius: 0; aspect-ratio: auto; }
+/* 紙は縦長なので、名前バッジと合わせてセルの高さに収まる幅にする */
+.tile.focused .cell .calendar-face.tearoff { width: 48%; }
+.cal-tearoff {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  /* マップ上の小さいセルでも拡大時の大きいセルでも同じ見た目になるよう、文字や穴は紙の幅(cqw)基準 */
+  container-type: inline-size;
+  background: #fdfbf5;
+  color: #3b4252;
+  border-radius: 3px;
+  overflow: hidden;
+  /* 下に紙が重なっている感じ(めくられる前の残りのページ) */
+  box-shadow: 0 1px 0 #d9d3c4, 0 2px 0 #b8b0a0, 0 3px 3px rgba(0, 0, 0, 0.35);
+}
+/* 上端の綴じ帯。赤は時計の秒針(#c0392b)と揃えて色を増やさない */
+.cal-tearoff-month {
+  position: relative;
+  width: 100%;
+  background: #c0392b;
+  color: #fff;
+  text-align: center;
+  /* 「2026(令和8)年9月」が綴じ穴に掛からず1行に収まる大きさ */
+  font-size: 9cqw;
+  font-weight: bold;
+  line-height: 2.8;
+  white-space: nowrap;
+}
+/* 綴じ穴 */
+.cal-tearoff-month::before,
+.cal-tearoff-month::after {
+  content: "";
+  position: absolute;
+  top: 9.5cqw;
+  width: 5cqw;
+  height: 5cqw;
+  border-radius: 50%;
+  background: #fdfbf5;
+}
+.cal-tearoff-month::before { left: 4%; }
+.cal-tearoff-month::after { right: 4%; }
+.cal-tearoff-day {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  font-size: 46cqw;
+  font-weight: bold;
+  line-height: 1;
+}
+.cal-tearoff-weekday { font-size: 14cqw; margin-bottom: 5cqw; }
+.cal-tearoff.sun .cal-tearoff-day, .cal-tearoff.sun .cal-tearoff-weekday { color: #c0392b; }
+.cal-tearoff.sat .cal-tearoff-day, .cal-tearoff.sat .cal-tearoff-weekday { color: #2a5fa8; }
 
 /* ブラウザエリア。iframeが読み込まれるまでの一瞬だけ見える背景 */
 .tile.browser { background: #cbd3d8; }
