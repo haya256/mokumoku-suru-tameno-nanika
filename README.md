@@ -175,6 +175,7 @@ venv/bin/python deploy/stop_event.py
 - `stop_event.py` を実行し忘れた場合に備えて、インスタンス内で**6時間後に自動シャットダウン**する保険が入っています。ただし課金を確実に止めるには、シャットダウン待ちにせず `stop_event.py` で明示的に終了させることを推奨します
 - インスタンス起動時に渡す情報(合言葉やDiscord Webhook URLを含む)は、同じAWSアカウント内で権限を持つ人なら閲覧できる状態になります。SSHでログインされるのと同程度の信頼範囲だと考えてください
 - AWSを使わずローカルで動作確認だけしたい場合は `venv/bin/pip install -r requirements.txt && venv/bin/python server.py` で `http://localhost:5000` を開けます
+- 開発時のAPIテストは `venv/bin/pip install -r requirements-dev.txt && venv/bin/python -m pytest tests` で実行できます(外部通信はモックされ、`config/` の本物の設定には触れません)
 
 ### 困ったとき（デプロイ関連）
 
