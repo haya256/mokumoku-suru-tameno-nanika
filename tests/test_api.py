@@ -110,6 +110,24 @@ def test_area_invalid_input(client):
     assert admin_post(client, "/admin/area", action="bogus").status_code == 400
 
 
+def test_area_unknown_kind(client):
+    # 以前はpeerとして黙って受け付けていたが、登録簿に無い種別は弾く
+    assert admin_post(client, "/admin/area", action="add", kind="nope", url="https://x.example.com").status_code == 400
+    # NPC専用の種別はエリアには置けない
+    assert admin_post(client, "/admin/area", action="add", kind="basic", name="a", task="b").status_code == 400
+
+
+def test_poll_refetches_lost_thumbnail(client, server):
+    # 再起動でメモリ上のサムネが消えた状態を再現し、巡回で取り直されることを確かめる
+    area_id = admin_post(client, "/admin/area", action="add", kind="youtube",
+                         url="https://youtu.be/dQw4w9WgXcQ").get_json()["area"]["id"]
+    server.area_images.clear()
+    assert client.get(f"/area-image/{area_id}").status_code == 404
+    server.poll_peers_once()
+    res = client.get(f"/area-image/{area_id}")
+    assert res.status_code == 200 and res.mimetype == "image/jpeg"
+
+
 def test_area_peer_duplicate(client):
     admin_post(client, "/admin/area", action="add", kind="peer", url="https://peer.example.com")
     res = admin_post(client, "/admin/area", action="add", kind="peer", url="https://peer.example.com")

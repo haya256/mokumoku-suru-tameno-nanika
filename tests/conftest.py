@@ -34,10 +34,12 @@ def server(tmp_path_factory):
     (workdir / "assets").mkdir()
     os.chdir(workdir)
     sys.path.insert(0, REPO_ROOT)
+    import kinds.browser
+    import net
     import server as srv
-    srv.fetch_peer_bytes = _fake_fetch_bytes
-    srv.fetch_peer_json = _fake_fetch_json
-    srv.check_iframe_embeddable = lambda url: True
+    net.fetch_bytes = _fake_fetch_bytes
+    net.fetch_json = _fake_fetch_json
+    kinds.browser.check_iframe_embeddable = lambda url: True
     return srv
 
 
