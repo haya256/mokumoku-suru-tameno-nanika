@@ -84,6 +84,21 @@
   </form>
   </div>
 
-  <script src="/static/js/app.js"></script>
+  <!-- 通常の<script>を順に読み込む(全ファイルで1つのグローバルスコープを共有する)。
+       kinds/ の順番はマスの部品の重なり順とワールド設定パネルの選択肢の順になる。main.jsは必ず最後 -->
+  <script src="/static/js/core.js"></script>
+  <script src="/static/js/kinds.js"></script>
+  <script src="/static/js/kinds/peer.js"></script>
+  <script src="/static/js/kinds/youtube.js"></script>
+  <script src="/static/js/kinds/clock.js"></script>
+  <script src="/static/js/kinds/calendar.js"></script>
+  <script src="/static/js/kinds/browser.js"></script>
+  <script src="/static/js/kinds/basic.js"></script>
+  <script src="/static/js/world.js"></script>
+  <script src="/static/js/playback.js"></script>
+  <script src="/static/js/chat.js"></script>
+  <script src="/static/js/board.js"></script>
+  <script src="/static/js/admin.js"></script>
+  <script src="/static/js/main.js"></script>
 </body>
 </html>
