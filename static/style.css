@@ -160,22 +160,30 @@ body {
 }
 
 /* 時計NPC: 上の時計エリアと同じ.clock-face/CLOCK_FACE_SVGを再利用し、部屋の1マス(.cell)に
-   小さく出す。.tile.focused .clock-face .numeral という既存の数字表示トグルは.tileとの
-   祖先子孫関係だけを見ているのでここでも無改修で効く。上書きが要るのは「既定で非表示」と
-   「タイル全体基準の絶対配置・大きさ」の2点だけ(.tile.clock > .clock-face の
-   pointer-events:none は子コンビネータ限定で部屋タイルにはそもそもマッチしない) */
+   小さく出す。上書きが要るのは「既定で非表示」と「タイル全体基準の絶対配置・大きさ」と
+   「数字を出さない」の3点だけ(.tile.clock > .clock-face の pointer-events:none は
+   子コンビネータ限定で部屋タイルにはそもそもマッチしない) */
 .cell .clock-face {
   display: block;
   position: static;
   inset: auto;
-  width: 60%;
+  /* 普通のNPC(.cell .chara の width:33%)と並べて浮かないよう、文字盤の円の直径をキャラの幅に
+     そろえる。SVGの円は枠の約74%(半径35.5+線幅)なので、33% ÷ 0.74 ≒ 45%。
+     キャラと同じく拡大時も同じ比率のままにする(マス自体が大きくなるので絵も大きくなる) */
+  width: 45%;
   height: auto;
   aspect-ratio: 1 / 1;
   pointer-events: auto;
+  /* 普通のNPC(.cell .chara)と同じく1秒ごとに上下にぴょこっと動かす。揺らすのは外側のdivで、
+     針(.hand)は自分のclock-spinを持つ別要素なので位相合わせには影響しない */
+  animation: bob 2s steps(1, end) infinite;
 }
 
-/* 拡大時は.tile.focused .cell .chara/.calendar-faceと対になる形で幅を広げる */
-.tile.focused .cell .clock-face { width: 90%; cursor: pointer; }
+.tile.focused .cell .clock-face { cursor: pointer; }
+
+/* 部屋のマスでは拡大時も数字を出さない(.tile.focused .clock-face .numeral を打ち消す)。
+   数字を読みたいときはクリックで開くステータスウィンドウ側に出る */
+.tile.focused .cell .clock-face .numeral { display: none; }
 
 /* YouTube NPC: 部屋のマスには静的なサムネイルを置き、拡大時だけ現れる▶ボタンを押すと
    その場でiframeを埋め込んで再生する(ワールドマップのYouTubeエリアと同じ「押すまで
@@ -292,8 +300,14 @@ body {
 /* カレンダーNPCは部屋の中では常に日めくり(今日1日だけ)。月グリッドはクリックで開く
    ステータスウィンドウで見せる。紙そのものは.cal-tearoffが描くので、外側の茶色い台紙は消す */
 .cell .calendar-face.tearoff { background: none; border-radius: 0; aspect-ratio: auto; }
-/* 紙は縦長なので、名前バッジと合わせてセルの高さに収まる幅にする */
-.tile.focused .cell .calendar-face.tearoff { width: 48%; }
+/* 普通のNPC(.cell .chara)と同じく1秒ごとに上下にぴょこっと動かす。
+   隣り合うNPCと揃わないよう、ずらし(animation-delay)も同じ式で calendar.js が入れる */
+.cell .calendar-face.tearoff { animation: bob 2s steps(1, end) infinite; }
+/* 普通のNPC(.cell .chara の width:33%)と並べて浮かないよう、紙の幅をキャラの幅にそろえる。
+   キャラや時計と同じく拡大時も同じ比率のまま。上の .cell .calendar-face の60%と
+   .tile.focused .cell .calendar-face の90%を打ち消すので、それぞれより詳細度の高い形で書く */
+.cell .calendar-face.tearoff,
+.tile.focused .cell .calendar-face.tearoff { width: 33%; }
 .cal-tearoff {
   display: flex;
   flex-direction: column;
@@ -316,7 +330,7 @@ body {
   background: #c0392b;
   color: #fff;
   text-align: center;
-  /* 「2026(令和8)年9月」が綴じ穴に掛からず1行に収まる大きさ */
+  /* 「2026年9月」が綴じ穴に掛からず1行に収まる大きさ */
   font-size: 9cqw;
   font-weight: bold;
   line-height: 2.8;

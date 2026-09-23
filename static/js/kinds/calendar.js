@@ -52,14 +52,15 @@ function buildCalendarFaceHTML(today) {
     <div class="cal-full">${buildCalendarGrid(today.getFullYear(), today.getMonth(), today)}</div>`;
 }
 
-// 部屋のカレンダーNPC用の日めくり。帯の年月はエリアと同じ西暦+和暦。部屋ではマップ上でも拡大時でも今日1日だけを出し、
+// 部屋のカレンダーNPC用の日めくり。紙が小さいので、帯の年月はエリアと違って和暦を付けず西暦だけにする。
+// 部屋ではマップ上でも拡大時でも今日1日だけを出し、
 // 月グリッドはクリックで開くステータスウィンドウに任せる。日曜は赤、土曜は青
 function buildTearOffHTML(today) {
   const weekday = today.getDay();
   const tone = weekday === 0 ? " sun" : weekday === 6 ? " sat" : "";
   return `
     <div class="cal-tearoff${tone}">
-      <div class="cal-tearoff-month">${formatYearMonth(today, today.getMonth())}</div>
+      <div class="cal-tearoff-month">${today.getFullYear()}年${today.getMonth() + 1}月</div>
       <div class="cal-tearoff-day">${today.getDate()}</div>
       <div class="cal-tearoff-weekday">${CALENDAR_WEEKDAYS[weekday]}</div>
     </div>`;
@@ -104,6 +105,7 @@ registerKind({
     const face = document.createElement("div");
     face.className = "calendar-face tearoff";
     face.innerHTML = buildTearOffHTML(new Date());
+    face.style.animationDelay = `${(o.room * 0.3) % 2}s`;  // basic.js のキャラと同じずらし方
     openStatusOnClick(face, o, null, tile, roomLabel);
     cell.append(face, buildBadge(o.name));
   },

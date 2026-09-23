@@ -109,6 +109,7 @@ registerKind({
   // 見えている間は毎pollずれを確かめ直してもらう(renderRoomIntoのliveCells)
   renderCell(cell, o, { tile, roomLabel }) {
     const { face, hands } = buildClockFace();
+    face.style.animationDelay = `${(o.room * 0.3) % 2}s`;  // basic.js のキャラと同じずらし方
     syncClockHands(hands);
     tile.liveCells.set(o.id, () => { if (clockNeedsSync(hands)) syncClockHands(hands); });
     openStatusOnClick(face, o, null, tile, roomLabel);
