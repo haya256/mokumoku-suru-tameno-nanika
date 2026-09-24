@@ -41,8 +41,8 @@ function renderBoard(entries) {
 function updateMyStatus() {
   const mine = lastEntries.find(e => e.id === clientId);
   if (mine) {
-    const until = mine.end ? `〜${mine.end}` : "〜";
-    myStatusEl.textContent = `🟢 ${mine.name}: ルーム${mine.room}でもくもく中(${mine.start}${until}): ${mine.task}`;
+    // 終了時刻が未定のときは「〜？」と出す
+    myStatusEl.textContent = `🟢 ${mine.name}　⏰ ${mine.start}〜${mine.end || "？"}　📝 ${mine.task}`;
     viewOnlyRow.style.display = "none";
     joinRow.style.display = editing ? "flex" : "none";
     statusRow.style.display = editing ? "none" : "flex";
