@@ -8,6 +8,16 @@ function npcImageUrl(o) {
   return `/npc-image/${encodeURIComponent(o.id)}?v=${encodeURIComponent(o.videoId || 0)}`;
 }
 
+// ブラウン管テレビ風の枠(ベゼル・電源ランプ・脚)。中身の画面は呼び出し側が作って渡す
+function buildTvFrame(screen) {
+  const tv = document.createElement("div");
+  tv.className = "npc-tv";
+  const led = document.createElement("span");
+  led.className = "npc-tv-led";
+  tv.append(screen, led);
+  return tv;
+}
+
 registerKind({
   key: "youtube",
 
@@ -57,55 +67,74 @@ registerKind({
     tile.areaName = area.name;
   },
 
-  // 再生中(tile.playingNpcIdと一致)ならライブ埋め込みを、そうでなければサムネ+▶(拡大時のみ)を出す。
-  // サムネ本体のクリックはステータスウィンドウを開く
+  // テレビの枠(.npc-tv)の中に、再生中(tile.playingNpcIdと一致)ならライブ埋め込みを、
+  // そうでなければサムネ+▶(拡大時のみ)を出す。再生中はiframeがクリックを吸うので、
+  // ステータスウィンドウを開く入口は画面ではなく枠のほうに持たせる
   renderCell(cell, o, { tile, roomLabel }) {
-    if (o.id === tile.playingNpcId) {
-      const wrap = document.createElement("div");
-      wrap.className = "npc-youtube-playing";
-      wrap.appendChild(buildYouTubeEmbed(o.videoId, { autoplay: true }));
-      cell.append(wrap, buildBadge(o.name));
-      return;
+    const playing = o.id === tile.playingNpcId;
+    const screen = document.createElement("div");
+    screen.className = "npc-tv-screen";
+    if (playing) {
+      screen.appendChild(buildYouTubeEmbed(o.videoId, { autoplay: true }));
+    } else {
+      screen.style.backgroundImage = `url(${npcImageUrl(o)})`;
+      const playBtn = document.createElement("button");
+      playBtn.type = "button";
+      playBtn.className = "npc-youtube-play";
+      playBtn.title = "再生";
+      playBtn.textContent = "▶";
+      // display:noneで隠れている間(未拡大時)はクリックが発生しえないので、
+      // ここでfocused判定をやり直す必要はない
+      playBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        startRoomNpcPlayback(tile, o);
+      });
+      screen.appendChild(playBtn);
     }
-    const thumb = document.createElement("div");
-    thumb.className = "npc-youtube-thumb";
-    thumb.style.backgroundImage = `url(${npcImageUrl(o)})`;
-    openStatusOnClick(thumb, o, null, tile, roomLabel);
-    const playBtn = document.createElement("button");
-    playBtn.type = "button";
-    playBtn.className = "npc-youtube-play";
-    playBtn.title = "再生";
-    playBtn.textContent = "▶";
-    // display:noneで隠れている間(未拡大時)はクリックが発生しえないので、
-    // ここでfocused判定をやり直す必要はない
-    playBtn.addEventListener("click", e => {
+    const tv = buildTvFrame(screen);
+    tv.classList.add("npc-youtube-tv");
+    // playback.js/world.jsは再生中のセルをこのクラスで見分ける
+    if (playing) tv.classList.add("npc-youtube-playing");
+    tv.addEventListener("click", e => {
+      // 縮小表示中はタイル全体クリック(ズーム用)に委ねる(openStatusOnClickと同じ)
+      if (!tile.el.classList.contains("focused")) return;
       e.stopPropagation();
-      startRoomNpcPlayback(tile, o);
+      // 部屋で流していた動画は、ウィンドウ側に引き継いで大きく流す(同時に鳴らせるのは1つだけ)
+      if (playing) {
+        stopAllPlayback();
+        renderWorld();
+      }
+      openCharaStatus(o, null, roomLabel, { autoplay: playing });
     });
-    thumb.appendChild(playBtn);
-    cell.append(thumb, buildBadge(o.name));
+    cell.append(tv, buildBadge(o.name));
   },
 
-  // 押したときだけbuildYouTubeEmbedでiframeを差し込む。他で再生中のタイルがあれば止める
-  renderStatus(container, o, roomLabel) {
+  // 押したときだけbuildYouTubeEmbedでiframeを差し込む。他で再生中のタイルがあれば止める。
+  // 部屋で再生中の枠から開いたとき(autoplay)は最初から埋め込んで再生する
+  statusWide: true,
+  renderStatus(container, o, roomLabel, { autoplay } = {}) {
     appendStatusRows(container, [["ルーム", statusRoomText(o, roomLabel)]]);
     const stage = document.createElement("div");
-    stage.className = "status-yt-stage";
-    const thumbImg = document.createElement("img");
-    thumbImg.src = npcImageUrl(o);
-    thumbImg.alt = "";
-    const playBtn = document.createElement("button");
-    playBtn.type = "button";
-    playBtn.className = "status-yt-play";
-    playBtn.textContent = "▶";
-    playBtn.addEventListener("click", () => {
-      stopAllPlayback();
-      renderWorld(); // stopTilePlayback/stopRoomNpcPlayback自体は状態を倒すだけで見た目
-                      // (▶やラベル)は次のrenderWorld()まで変わらないので、ここで即座に反映させる
-      stage.replaceChildren(buildYouTubeEmbed(o.videoId, { autoplay: true }));
-    });
-    stage.append(thumbImg, playBtn);
-    container.appendChild(stage);
+    stage.className = "npc-tv-screen status-yt-stage";
+    const play = () => stage.replaceChildren(buildYouTubeEmbed(o.videoId, { autoplay: true }));
+    if (autoplay) {
+      play();
+    } else {
+      stage.style.backgroundImage = `url(${npcImageUrl(o)})`;
+      const playBtn = document.createElement("button");
+      playBtn.type = "button";
+      playBtn.className = "status-yt-play";
+      playBtn.textContent = "▶";
+      playBtn.addEventListener("click", () => {
+        stopAllPlayback();
+        renderWorld(); // stopTilePlayback/stopRoomNpcPlayback自体は状態を倒すだけで見た目
+                        // (▶やラベル)は次のrenderWorld()まで変わらないので、ここで即座に反映させる
+        stage.style.backgroundImage = "";
+        play();
+      });
+      stage.appendChild(playBtn);
+    }
+    container.appendChild(buildTvFrame(stage));
   },
 
   area: {

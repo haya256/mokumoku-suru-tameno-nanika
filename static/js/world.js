@@ -122,6 +122,7 @@ function peerCharaUrl(peerId) {
 }
 
 const charaStatusOverlay = document.getElementById("charaStatusOverlay");
+const charaStatusWindow = document.getElementById("charaStatusWindow");
 const charaStatusName = document.getElementById("charaStatusName");
 const charaStatusPortrait = document.getElementById("charaStatusPortrait");
 const charaStatusText = document.getElementById("charaStatusText");
@@ -144,8 +145,9 @@ function appendStatusRows(container, rows) {
 }
 
 // アバタークリックで開くステータスウィンドウ。中身は種別ごとに出し分ける(renderStatus)
-function openCharaStatus(o, portrait, roomLabel) {
+function openCharaStatus(o, portrait, roomLabel, opts = {}) {
   const kind = KINDS[o.kind]?.renderStatus ? KINDS[o.kind] : KINDS.basic;
+  charaStatusWindow.classList.toggle("wide", !!kind.statusWide);
   charaStatusName.textContent = o.name;
   charaStatusPortrait.hidden = !portrait;
   if (portrait) {
@@ -154,7 +156,7 @@ function openCharaStatus(o, portrait, roomLabel) {
     charaStatusPortrait.style.backgroundPosition = portrait.custom ? "" : portrait.position;
   }
   charaStatusText.innerHTML = "";
-  kind.renderStatus(charaStatusText, o, roomLabel);
+  kind.renderStatus(charaStatusText, o, roomLabel, opts);
   charaStatusOverlay.hidden = false;
 }
 

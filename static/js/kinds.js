@@ -8,7 +8,9 @@
 //   area                   ワールド設定パネルでの見せ方(無ければエリアには置けない)
 //   renderCell(cell, o, { tile, roomLabel, charaUrl })   部屋の中の1セルを描く
 //   cellFingerprint()      部屋を描き直すかどうかの判定に足す値(カレンダーの日付など)
-//   renderStatus(container, o, roomLabel)   アバタークリックで開くステータスウィンドウの中身
+//   renderStatus(container, o, roomLabel, opts)   アバタークリックで開くステータスウィンドウの中身
+//                          (optsはopenCharaStatusの呼び出し元が種別に渡したいもの。YouTubeのautoplayなど)
+//   statusWide             ステータスウィンドウを広めに開くか(動画を大きく見せるYouTube用)
 //   npc                    NPC管理パネルでの見せ方(無ければNPCにはなれない)
 //   hasSchedule            在室者一覧に開始・終了時刻を出すか(実参加者と基本NPCだけ)
 //   errors                 サーバーのエラーコードに対する、この種別固有の説明文

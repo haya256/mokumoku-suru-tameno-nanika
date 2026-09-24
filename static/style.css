@@ -185,20 +185,60 @@ body {
    数字を読みたいときはクリックで開くステータスウィンドウ側に出る */
 .tile.focused .cell .clock-face .numeral { display: none; }
 
-/* YouTube NPC: 部屋のマスには静的なサムネイルを置き、拡大時だけ現れる▶ボタンを押すと
-   その場でiframeを埋め込んで再生する(ワールドマップのYouTubeエリアと同じ「押すまで
-   再生しない」原則)。ステータスウィンドウでも同じ動画を確認できる */
-.cell .npc-youtube-thumb {
+/* YouTube NPC: 部屋のマスにはブラウン管テレビ風の枠(.npc-tv)を置き、画面には静的なサムネイルを
+   出す。拡大時だけ現れる▶ボタンを押すとその場でiframeを埋め込んで再生する(ワールドマップの
+   YouTubeエリアと同じ「押すまで再生しない」原則)。枠をクリックするとステータスウィンドウで大きく見られる */
+.npc-tv {
   position: relative;
-  width: 70%;
+  box-sizing: border-box;
+  /* 下側のベゼルだけ厚くして電源ランプを置く(昔のテレビの顔) */
+  padding: 5% 5% 9%;
+  background: linear-gradient(#5a5550, #37332f);
+  border: 2px solid #1b1917;
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+/* 脚。枠の下に少しだけはみ出させる */
+.npc-tv::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 30%;
+  width: 40%;
+  height: 7%;
+  background: #2a2724;
+  border-radius: 0 0 4px 4px;
+}
+.npc-tv-led {
+  position: absolute;
+  right: 7%;
+  bottom: 3%;
+  width: 3.5%;
+  max-width: 10px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  background: #6f6;
+  box-shadow: 0 0 3px #6f6;
+}
+.npc-tv-screen {
+  position: relative;
+  width: 100%;
   aspect-ratio: 16 / 9;
   background-color: #111;
   background-size: cover;
   background-position: center;
-  border: 1px solid #000;
-  border-radius: 4px;
+  border: 2px solid #111;
+  border-radius: 6px / 8px;
+  overflow: hidden;
 }
-.tile.focused .cell .npc-youtube-thumb { width: 92%; cursor: pointer; }
+/* buildYouTubeEmbed()の.yt-embed(チャット用の余白/最大幅)を打ち消して画面いっぱいに広げる */
+.npc-tv-screen .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
+
+/* 部屋の1マスでは左右に5%ずつ余白を残す。未拡大の小さいマスでは枠の線が太く見えすぎるので細くする */
+.cell .npc-youtube-tv { width: 90%; border-width: 1px; border-radius: 5px; }
+.cell .npc-youtube-tv .npc-tv-screen { border-width: 1px; border-radius: 3px; }
+.tile.focused .cell .npc-youtube-tv { border-width: 2px; border-radius: 10px; cursor: pointer; }
+.tile.focused .cell .npc-youtube-tv .npc-tv-screen { border-width: 2px; border-radius: 6px / 8px; }
 
 /* ▶ボタンは未拡大では小さすぎて押せないので、拡大したマスだけで出す(.cell .badgeと同じ流儀) */
 .cell .npc-youtube-play { display: none; }
@@ -218,16 +258,6 @@ body {
   font-size: 0.8rem;
   cursor: pointer;
 }
-
-/* 再生中のセル。buildYouTubeEmbed()の.yt-embed(チャット用の余白/最大幅)を打ち消して
-   セルいっぱいに広げる */
-.cell .npc-youtube-playing {
-  position: relative;
-  width: 92%;
-  aspect-ratio: 16 / 9;
-  background: #111;
-}
-.cell .npc-youtube-playing .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
 
 /* カレンダーエリア。時計(#8f9a91、寒色寄り)と隣り合っても種別の違いが色でも分かるよう、
    同じ低彩度でも暖色寄り(紙のような色)にずらす */
@@ -763,17 +793,9 @@ body {
 #charaStatusText .clock-face { display: block; width: 140px; margin: 0 auto; }
 #charaStatusText .clock-face .numeral { display: block; }
 
-/* YouTube NPCのステータスウィンドウ内再生ステージ。押すまではサムネ+▶、
-   押すとbuildYouTubeEmbed()の.yt-embedに差し替わる(チャット用の余白/最大幅は
-   ステージ内では打ち消してぴったり収める) */
-#charaStatusText .status-yt-stage {
-  position: relative;
-  width: 100%;
-  max-width: 360px;
-  aspect-ratio: 16 / 9;
-  background: #111;
-}
-#charaStatusText .status-yt-stage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* YouTube NPCのステータスウィンドウ。動画を大きく見せるため、ウィンドウ自体を広げる */
+#charaStatusWindow.wide { width: min(760px, 100%); }
+/* 再生ステージ(テレビの画面)。押すまではサムネ+▶、押すとbuildYouTubeEmbed()の.yt-embedに差し替わる */
 #charaStatusText .status-yt-stage .status-yt-play {
   position: absolute;
   inset: 0;
@@ -787,7 +809,8 @@ body {
   font-size: 1.4rem;
   cursor: pointer;
 }
-#charaStatusText .status-yt-stage .yt-embed { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; }
+/* 脚の分だけ下に余白を空けて、閉じるボタンと重ならないようにする */
+#charaStatusText .npc-tv { margin-bottom: 12px; }
 
 #charaStatusCloseBtn {
   display: block;
