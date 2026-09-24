@@ -185,6 +185,10 @@ body {
    数字を読みたいときはクリックで開くステータスウィンドウ側に出る */
 .tile.focused .cell .clock-face .numeral { display: none; }
 
+/* 部屋のマスでは秒針も出さない(拡大時も)。ステータスウィンドウ側には出る。
+   display:none や animation:none は位相が壊れるので、reduced-motion と同じく visibility で隠す */
+.cell .clock-face .hand.sec { visibility: hidden; }
+
 /* YouTube NPC: 部屋のマスにはブラウン管テレビ風の枠(.npc-tv)を置き、画面には静的なサムネイルを
    出す。拡大時だけ現れる▶ボタンを押すとその場でiframeを埋め込んで再生する(ワールドマップの
    YouTubeエリアと同じ「押すまで再生しない」原則)。枠をクリックするとステータスウィンドウで大きく見られる */
