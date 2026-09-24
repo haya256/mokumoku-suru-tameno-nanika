@@ -580,11 +580,7 @@ body {
   gap: 6px;
 }
 
-/* 部屋画像の差し替えは自分のルームを見ているときだけ意味があるので、そのときだけ出す */
-#roomImageBtn { display: none; }
-#roomView.showing-self #roomImageBtn { display: block; }
-
-#roomImagePanel, #worldPanel, #npcPanel, #roomStatePanel {
+#roomSettingsPanel, #worldPanel, #npcPanel {
   position: absolute;
   top: 36px;
   right: 8px;
@@ -599,7 +595,31 @@ body {
   max-width: calc(100% - 16px);
 }
 
-#roomImagePanel img {
+#roomSettingsPanel {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 10px;
+  width: min(340px, calc(100% - 16px));
+}
+.room-settings-heading {
+  font-size: 0.75rem;
+  font-weight: bold;
+  color: #555;
+  margin-bottom: 4px;
+}
+.room-settings-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.room-title-form {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.room-title-form input { flex: 1; min-width: 0; }
+
+#roomSettingsPanel img {
   width: 64px;
   height: 64px;
   object-fit: cover;
@@ -609,10 +629,10 @@ body {
   image-rendering: pixelated;
 }
 
-#roomImagePanel img.selected { border-color: #3a3; }
-#roomImagePanel img:hover { opacity: 0.85; }
+#roomSettingsPanel img.selected { border-color: #3a3; }
+#roomSettingsPanel img:hover { opacity: 0.85; }
 
-#roomStatePanel button {
+#roomSettingsPanel .room-state-btn {
   padding: 5px 12px;
   font-size: 0.8rem;
   border: 2px solid transparent;
@@ -621,8 +641,8 @@ body {
   color: #333;
   cursor: pointer;
 }
-#roomStatePanel button.selected { border-color: #3a3; background: #dfd; }
-#roomStatePanel button:hover { opacity: 0.85; }
+#roomSettingsPanel .room-state-btn.selected { border-color: #3a3; background: #dfd; }
+#roomSettingsPanel .room-state-btn:hover { opacity: 0.85; }
 
 #worldPanel, #npcPanel {
   flex-direction: column;

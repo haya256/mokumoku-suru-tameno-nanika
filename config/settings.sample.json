@@ -5,6 +5,7 @@
     "admin_passphrase_file": "config/管理者合言葉.txt"
   },
   "appearance": {
+    "title": "もくもく会",
     "room_image": "assets/room-image-1.webp"
   },
   "deploy": {

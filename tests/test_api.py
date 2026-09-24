@@ -196,6 +196,16 @@ def test_room_state(client):
     admin_post(client, "/admin/room-state", state="normal")
 
 
+def test_room_title(client):
+    assert client.get("/status").get_json()["title"] == "もくもく会"
+    assert admin_post(client, "/admin/room-title", title="  夜のもくもく  ").status_code == 200
+    assert client.get("/status").get_json()["title"] == "夜のもくもく"
+    assert admin_post(client, "/admin/room-title", title="   ").status_code == 400
+    assert admin_post(client, "/admin/room-title", title="あ" * 41).status_code == 400
+    from mokumoku import settings
+    settings.update_settings(lambda s: s["appearance"].pop("title"))
+
+
 def test_index_served(client, server):
     # server.pyはindex.htmlを作業ディレクトリから配信するため、テストでは一時的にリポジトリを指す
     import os
@@ -205,5 +215,6 @@ def test_index_served(client, server):
     try:
         res = client.get("/")
         assert res.status_code == 200 and b"<script" in res.data
+        assert "<title>もくもく会</title>" in res.get_data(as_text=True)
     finally:
         os.chdir(cwd)

@@ -1,5 +1,6 @@
 // 画面全体で共有するDOM参照・状態と、どこからでも使う小さな道具。最初に読み込まれる
 const messagesEl = document.getElementById("messages");
+const roomTitleEl = document.getElementById("roomTitle");
 const entriesEl = document.getElementById("entries");
 const form = document.getElementById("form");
 const nameEl = document.getElementById("name");

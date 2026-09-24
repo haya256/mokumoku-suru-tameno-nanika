@@ -10,7 +10,7 @@ from mokumoku import settings, state
 from mokumoku.auth import admin_label, check_passphrase, is_admin_passphrase, require_admin
 from mokumoku.media import decode_chara_image, decode_chat_image
 from mokumoku.notify import add_system_message, discord_status, post_to_discord
-from mokumoku.settings import ROOM_IMAGE_DIR, list_room_images, set_room_image_setting, set_room_state_setting
+from mokumoku.settings import ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, list_room_images, room_title, set_room_image_setting, set_room_state_setting, set_room_title_setting
 from mokumoku.state import _board_lock, board, bump_room_image_version, custom_images, message_images, messages, next_img_seq, pick_free_room
 
 # 自分のルーム: チャット・入退室・管理者によるルームの見た目の操作
@@ -25,7 +25,7 @@ ROOM_STATE_LABELS = {"preparing": "準備中", "closed": "Closed"}  # システ�
 def get_status():
     discord = discord_status()
     room_state = settings.load_settings().get("appearance", {}).get("room_state", "normal")
-    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state})
+    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title()})
 
 @bp.route("/messages", methods=["GET"])
 def get_messages():
@@ -172,6 +172,20 @@ def admin_set_room_state():
     else:
         add_system_message(f"🚪 {admin_label(data)}がルームを「{ROOM_STATE_LABELS[state]}」にしました")
     return jsonify({"ok": True, "state": state})
+
+# タイトル変更の実行: 画面上部とブラウザのタブに出る名前。settings.jsonに残るので次回起動時もこのタイトルで始まる
+@bp.route("/admin/room-title", methods=["POST"])
+def admin_set_room_title():
+    data = request.get_json()
+    err = require_admin(data)
+    if err:
+        return err
+    title = (data.get("title") or "").strip()
+    if not title or len(title) > ROOM_TITLE_MAX_LEN:
+        return jsonify({"error": "invalid title"}), 400
+    set_room_title_setting(title)
+    add_system_message(f"🏷️ {admin_label(data)}がタイトルを「{title}」に変更しました")
+    return jsonify({"ok": True, "title": title})
 
 @bp.route("/board/leave", methods=["POST"])
 def leave_board():

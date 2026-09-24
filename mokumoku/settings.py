@@ -9,6 +9,8 @@ DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
 DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
 ROOM_IMAGE_DIR = "assets"
 ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
+DEFAULT_ROOM_TITLE = "もくもく会"
+ROOM_TITLE_MAX_LEN = 40
 _settings_write_lock = threading.Lock()
 
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
@@ -60,6 +62,17 @@ def set_room_state_setting(state):
     def mutate(settings):
         settings.setdefault("appearance", {})["room_state"] = state
     update_settings(mutate)
+
+# appearance.titleだけを部分更新する。titleは空でなく長さ上限内であることを検証済みの前提
+def set_room_title_setting(title):
+    def mutate(settings):
+        settings.setdefault("appearance", {})["title"] = title
+    update_settings(mutate)
+
+# 画面上部・ブラウザのタブに出すタイトル。未設定/空なら既定の「もくもく会」
+def room_title():
+    title = load_settings().get("appearance", {}).get("title")
+    return title.strip() if isinstance(title, str) and title.strip() else DEFAULT_ROOM_TITLE
 
 # ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
 def read_secret_file(path):

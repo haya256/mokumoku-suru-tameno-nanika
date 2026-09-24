@@ -1,12 +1,14 @@
+import html
 import mimetypes
 import os
 import threading
 import time
 
-from flask import Flask, send_from_directory
+from flask import Flask
 
 from mokumoku.peers import peer_poll_loop
 from mokumoku.routes import images, npc, room, world
+from mokumoku.settings import DEFAULT_ROOM_TITLE, room_title
 
 # サーバーのOSタイムゾーン(EC2は既定でUTC)に関わらず、入退室記録をJST(クライアント側の時刻)と揃える
 os.environ["TZ"] = "Asia/Tokyo"
@@ -26,7 +28,13 @@ for module in (room, world, npc, images):
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    # 表示直後から設定済みのタイトルが出るよう、既定タイトルの箇所を差し替えて返す(以後の変更はpollで追随)
+    with open("index.html", encoding="utf-8") as f:
+        page = f.read()
+    title = html.escape(room_title())
+    for tag in ("<title>{}</title>", '<span id="roomTitle">{}</span>'):
+        page = page.replace(tag.format(DEFAULT_ROOM_TITLE), tag.format(title))
+    return page
 
 # waitress以外から起動された場合も巡回が回るよう、__main__ではなくモジュール読み込み時に開始する
 threading.Thread(target=peer_poll_loop, daemon=True).start()

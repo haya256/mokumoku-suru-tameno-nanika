@@ -244,7 +244,7 @@ function renderWorld() {
     if (slot.self) {
       if (tile.img.getAttribute("src") !== selfRoomImageSrc) tile.img.src = selfRoomImageSrc;
       setClass(tile.el, `tile self${focused}`);
-      tile.label.textContent = "このルーム";
+      tile.label.textContent = `${roomTitleEl.textContent}（このルーム）`;
       tile.status.hidden = true;
       renderRoomInto(tile, lastEntries, selfCharaUrl, null, visible);
       const stateLabel = ROOM_STATE_LABELS[roomState];
@@ -262,7 +262,6 @@ function renderWorld() {
     }
   });
   renderNowPlaying();
-  roomViewEl.classList.toggle("showing-self", focus === "self");
   backToMapBtn.hidden = !(areas.length > 0 && focusedKey !== null);
 }
 

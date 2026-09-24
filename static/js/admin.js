@@ -1,4 +1,4 @@
-// 管理者用の操作(強制退出・部屋画像・ルームの状態・ワールド設定・NPC管理)。
+// 管理者用の操作(強制退出・ルームの設定・ワールド設定・NPC管理)。
 // 表示・操作の可否はサーバーが都度合言葉で判定する。ここはボタンとパネルの出し入れだけ
 // 今保持している合言葉が管理者合言葉かどうかをサーバーに確認する(ボタン表示の判定用)
 async function checkAdmin() {
@@ -49,16 +49,14 @@ function syncAdminButtons() {
     const bar = document.createElement("div");
     bar.id = "adminBar";
     bar.append(
-      adminButton("roomImageBtn", "部屋画像を変更", toggleRoomImagePanel),
-      adminButton("roomStateBtn", "ルームの状態", toggleRoomStatePanel),
+      adminButton("roomSettingsBtn", "ルームの設定", toggleRoomSettingsPanel),
       adminButton("worldBtn", "ワールド設定", toggleWorldPanel),
       adminButton("npcBtn", "NPC管理", toggleNpcPanel),
     );
     roomViewEl.appendChild(bar);
   } else if (!isAdmin) {
     existingBar?.remove();
-    document.getElementById("roomImagePanel")?.remove();
-    document.getElementById("roomStatePanel")?.remove();
+    document.getElementById("roomSettingsPanel")?.remove();
     document.getElementById("worldPanel")?.remove();
     document.getElementById("npcPanel")?.remove();
   }
@@ -73,8 +71,16 @@ function adminButton(id, label, onClick) {
   return btn;
 }
 
-async function toggleRoomImagePanel() {
-  const existingPanel = document.getElementById("roomImagePanel");
+const ROOM_STATE_OPTIONS = [
+  { value: "normal", label: "通常" },
+  { value: "preparing", label: "準備中" },
+  { value: "closed", label: "Closed" },
+];
+
+// ルームの設定: 状態・部屋画像・タイトルをまとめたパネル。
+// 状態とタイトルの現在値はpollで既に持っているので、問い合わせが要るのは画像一覧だけ
+async function toggleRoomSettingsPanel() {
+  const existingPanel = document.getElementById("roomSettingsPanel");
   if (existingPanel) { existingPanel.remove(); return; }
   const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
   let data;
@@ -91,17 +97,83 @@ async function toggleRoomImagePanel() {
     return;
   }
   const panel = document.createElement("div");
-  panel.id = "roomImagePanel";
-  (data.images || []).forEach(name => {
-    const img = document.createElement("img");
-    img.src = `/room-image-preview/${encodeURIComponent(name)}`;
-    img.alt = name;
-    img.title = name;
-    if (name === data.current) img.classList.add("selected");
-    img.addEventListener("click", () => applyRoomImage(name));
-    panel.appendChild(img);
-  });
+  panel.id = "roomSettingsPanel";
+  panel.append(
+    roomSettingsSection("タイトル", buildRoomTitleForm()),
+    roomSettingsSection("状態", ...ROOM_STATE_OPTIONS.map(({ value, label }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "room-state-btn";
+      btn.textContent = label;
+      if (value === roomState) btn.classList.add("selected");
+      btn.addEventListener("click", () => applyRoomState(value));
+      return btn;
+    })),
+    roomSettingsSection("部屋画像", ...(data.images || []).map(name => {
+      const img = document.createElement("img");
+      img.src = `/room-image-preview/${encodeURIComponent(name)}`;
+      img.alt = name;
+      img.title = name;
+      if (name === data.current) img.classList.add("selected");
+      img.addEventListener("click", () => applyRoomImage(name));
+      return img;
+    })),
+  );
   roomViewEl.appendChild(panel);
+}
+
+function roomSettingsSection(heading, ...items) {
+  const section = document.createElement("div");
+  section.className = "room-settings-section";
+  const h = document.createElement("div");
+  h.className = "room-settings-heading";
+  h.textContent = heading;
+  const body = document.createElement("div");
+  body.className = "room-settings-items";
+  body.append(...items);
+  section.append(h, body);
+  return section;
+}
+
+function buildRoomTitleForm() {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 40;
+  input.value = roomTitleEl.textContent;
+  const apply = () => applyRoomTitle(input.value.trim());
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); apply(); }
+  });
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "変更";
+  btn.addEventListener("click", apply);
+  const wrap = document.createElement("div");
+  wrap.className = "room-title-form";
+  wrap.append(input, btn);
+  return wrap;
+}
+
+async function applyRoomTitle(title) {
+  if (!title) { alert("タイトルを入力してください"); return; }
+  const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+  let data;
+  try {
+    const res = await fetch("/admin/room-title", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase, title, actorId: clientId }),
+    });
+    if (!res.ok) { alert("タイトルの変更に失敗しました"); return; }
+    data = await res.json();
+  } catch {
+    alert("タイトルの変更に失敗しました");
+    return;
+  }
+  document.getElementById("roomSettingsPanel")?.remove();
+  roomTitleEl.textContent = data.title;
+  document.title = data.title;
+  renderWorld();
 }
 
 async function applyRoomImage(name) {
@@ -119,36 +191,13 @@ async function applyRoomImage(name) {
     alert("部屋画像の変更に失敗しました");
     return;
   }
-  document.getElementById("roomImagePanel")?.remove();
+  document.getElementById("roomSettingsPanel")?.remove();
   // 操作した本人はジッター待ちせず即時反映。以後のpollで同じバージョンを受け取っても
   // scheduleRoomImageRefreshが「既に反映済み」と判定して再取得しないよう基準値も更新する
   roomImageVersion = data.version;
   pendingImageVersion = null;
   selfRoomImageSrc = `/room-image.webp?v=${data.version}`;
   renderWorld();
-}
-
-const ROOM_STATE_OPTIONS = [
-  { value: "normal", label: "通常" },
-  { value: "preparing", label: "準備中" },
-  { value: "closed", label: "Closed" },
-];
-
-// 現在値はpollで既に持っている(roomState)ので、画像一覧と違いサーバーへの問い合わせは不要
-function toggleRoomStatePanel() {
-  const existingPanel = document.getElementById("roomStatePanel");
-  if (existingPanel) { existingPanel.remove(); return; }
-  const panel = document.createElement("div");
-  panel.id = "roomStatePanel";
-  ROOM_STATE_OPTIONS.forEach(({ value, label }) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = label;
-    if (value === roomState) btn.classList.add("selected");
-    btn.addEventListener("click", () => applyRoomState(value));
-    panel.appendChild(btn);
-  });
-  roomViewEl.appendChild(panel);
 }
 
 async function applyRoomState(state) {
@@ -166,7 +215,7 @@ async function applyRoomState(state) {
     alert("ルームの状態の変更に失敗しました");
     return;
   }
-  document.getElementById("roomStatePanel")?.remove();
+  document.getElementById("roomSettingsPanel")?.remove();
   roomState = data.state;
   renderWorld();
 }

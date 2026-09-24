@@ -15,6 +15,11 @@ function renderStatus(status) {
   if (typeof status.roomImageVersion === "number") {
     scheduleRoomImageRefresh(status.roomImageVersion);
   }
+  if (typeof status.title === "string" && status.title !== roomTitleEl.textContent) {
+    roomTitleEl.textContent = status.title;
+    document.title = status.title;
+    renderWorld();
+  }
   if (typeof status.roomState === "string" && status.roomState !== roomState) {
     roomState = status.roomState;
     renderWorld();
