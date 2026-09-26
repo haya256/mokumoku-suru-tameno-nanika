@@ -89,7 +89,33 @@ function clearPendingImage() {
   msgImageEl.value = "";
 }
 
-attachImageBtn.addEventListener("click", () => msgImageEl.click());
+// 「＋」で添付メニューを開き、項目を選んだら対応するファイル選択を出す。
+// メニューの外をクリックするかEscで閉じる
+function setAttachMenuOpen(open) {
+  attachMenu.hidden = !open;
+  attachImageBtn.setAttribute("aria-expanded", String(open));
+}
+
+attachImageBtn.addEventListener("click", e => {
+  e.stopPropagation();
+  setAttachMenuOpen(attachMenu.hidden);
+});
+
+attachImageItem.addEventListener("click", () => {
+  setAttachMenuOpen(false);
+  msgImageEl.click();
+});
+
+document.addEventListener("click", e => {
+  if (!attachMenu.hidden && !attachMenu.contains(e.target)) setAttachMenuOpen(false);
+});
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !attachMenu.hidden) {
+    setAttachMenuOpen(false);
+    attachImageBtn.focus();
+  }
+});
 
 msgImageEl.addEventListener("change", async () => {
   const file = msgImageEl.files[0];

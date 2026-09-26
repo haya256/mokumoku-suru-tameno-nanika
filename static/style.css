@@ -1171,6 +1171,50 @@ header {
   margin-top: 6px;
 }
 
+/* チャット入力欄の左の「＋」と、そこから上に開く添付メニュー */
+.attach-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+#attachImageBtn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.attach-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px;
+  min-width: 150px;
+}
+
+.attach-menu[hidden] { display: none; }
+
+.attach-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.attach-menu button:hover, .attach-menu button:focus { background: #f0f0f0; }
+
 #pendingImageRow {
   align-items: center;
   gap: 8px;

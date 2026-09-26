@@ -71,7 +71,12 @@
         </div>
         <div class="row-line">
           <input id="msgImage" type="file" accept="image/*" hidden>
-          <button type="button" id="attachImageBtn" title="画像を添付">📷</button>
+          <span class="attach-wrap">
+            <button type="button" id="attachImageBtn" title="添付" aria-haspopup="menu" aria-expanded="false">＋</button>
+            <div id="attachMenu" class="attach-menu" role="menu" hidden>
+              <button type="button" id="attachImageItem" role="menuitem">🖼️ 画像を添付</button>
+            </div>
+          </span>
           <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
           <button type="submit">送信</button>
         </div>
