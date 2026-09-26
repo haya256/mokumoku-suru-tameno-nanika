@@ -38,6 +38,23 @@ async function kickUser(id, name) {
   await poll();
 }
 
+async function deleteMessage(id, name) {
+  if (!confirm(`${name} の発言を削除しますか？\n全員の画面から消えます`)) return;
+  const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+  try {
+    const res = await fetch("/admin/message-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, passphrase, actorId: clientId }),
+    });
+    if (!res.ok) { alert("発言の削除に失敗しました"); return; }
+  } catch {
+    alert("発言の削除に失敗しました");
+    return;
+  }
+  await poll();
+}
+
 // isAdminが変化した瞬間だけボタン(と開いていればパネル)を除去/追加する。
 // renderBoardのkickボタンと違い、2秒ごとのpollで作り直すとパネルの開閉状態が消えてしまうため、
 // 「変化があったときだけ」DOMを触る設計にする

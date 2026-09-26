@@ -3,8 +3,9 @@ let lastMsgSig = "";
 
 function render(msgs) {
   // マージ後は件数だけでは変化を判定できない(ピアの取得遅れで途中に挿入されうる)ため、
-  // 件数と末尾のタイムスタンプを繋げたシグネチャで比べる
-  const sig = `${msgs.length}|${msgs.length ? msgs[msgs.length - 1].ts : 0}`;
+  // 件数と末尾のタイムスタンプを繋げたシグネチャで比べる。
+  // 管理者になった・外れたときは削除ボタンを出し直すので、isAdminも含める
+  const sig = `${msgs.length}|${msgs.length ? msgs[msgs.length - 1].ts : 0}|${isAdmin}`;
   if (sig === lastMsgSig) return;
   lastMsgSig = sig;
   messagesEl.innerHTML = "";
@@ -19,6 +20,15 @@ function render(msgs) {
     } else {
       div.className = `msg${remote}`;
       div.innerHTML = `<div class="meta">${from}<span>${esc(m.name)}</span> ${esc(m.time)}</div>`;
+      // 管理者は自分のルームの発言を削除できる(相手ルームの発言は相手の管理者の領分)
+      if (isAdmin && !m.from && m.id) {
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "delete";
+        delBtn.textContent = "削除";
+        delBtn.addEventListener("click", () => deleteMessage(m.id, m.name));
+        div.querySelector(".meta").appendChild(delBtn);
+      }
       const textEl = document.createElement("div");
       textEl.className = "text";
       const videoId = appendLinkedText(textEl, m.text);

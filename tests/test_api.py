@@ -102,6 +102,31 @@ def test_kicked_seat_is_revoked(client):
     assert join(client, seat=seat, passphrase="ちがう").status_code == 401
 
 
+FAKE_WEBP = b"RIFF\x00\x00\x00\x00WEBPfake"
+
+
+def test_admin_delete_message(client):
+    import base64
+    seat = join_seat(client)
+    image = "data:image/webp;base64," + base64.b64encode(FAKE_WEBP).decode()
+    msg = post_message(client, seat=seat, text="けしてね", image=image).get_json()
+    keep = post_message(client, seat=seat, text="のこしてね").get_json()
+    assert msg["id"] and msg["id"] != keep["id"]
+    assert client.get(f"/message-image/{msg['image']}.webp").status_code == 200
+
+    assert client.post("/admin/message-delete", json={"id": msg["id"], "passphrase": PASSPHRASE}).status_code == 403
+    assert admin_post(client, "/admin/message-delete", id="nope").status_code == 404
+    system_id = next(m.get("id") for m in client.get("/messages").get_json() if m.get("system"))
+    assert admin_post(client, "/admin/message-delete", id=system_id).status_code == 404
+
+    assert admin_post(client, "/admin/message-delete", id=msg["id"]).status_code == 200
+    texts = [m["text"] for m in client.get("/messages").get_json()]
+    assert "けしてね" not in texts and "のこしてね" in texts
+    # 跡形なく消す: 削除のお知らせは流さない
+    assert not any("削除" in t for t in system_texts(client))
+    assert client.get(f"/message-image/{msg['image']}.webp").status_code == 404
+
+
 def test_admin_label_uses_actor_name(client):
     join(client)
     admin_post(client, "/admin/area", action="add", kind="clock", name="時計A", actorId="u1")

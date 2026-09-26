@@ -1116,6 +1116,28 @@ header {
   color: #333;
 }
 
+.msg .delete {
+  margin-left: 8px;
+  background: #fff;
+  color: #c33;
+  border: 1px solid #c33;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.msg .delete:hover {
+  background: #fee;
+}
+
+/* 削除ボタンはふだん隠し、その発言にマウスを乗せたときだけ出す。
+   マウスのないスマホなどでは乗せる操作ができないので、常に出したままにする */
+@media (hover: hover) {
+  .msg .delete { visibility: hidden; }
+  .msg:hover .delete, .msg .delete:focus { visibility: visible; }
+}
+
 .msg .text {
   font-size: 0.95rem;
   word-break: break-word;

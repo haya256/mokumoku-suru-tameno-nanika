@@ -52,7 +52,9 @@ def post_message():
         message_images[image_id] = raw
     if not text and not image_id:
         return jsonify({"error": "text or image required"}), 400
+    # idは管理者が発言を削除するときの指定用
     msg = {
+        "id": secrets.token_urlsafe(8),
         "name": name,
         "text": text,
         "time": datetime.now().strftime("%H:%M"),
@@ -141,6 +143,25 @@ def kick_board():
     seat_tokens.pop(cid, None)
     if entry:
         add_system_message(f"🚫 {entry['name']} が{admin_label(data)}によりルーム{entry['room']}から強制退室させられました")
+    return jsonify({"ok": True})
+
+# 発言の削除: 管理者専用。跡形なく消す(置き換え表示やお知らせは出さない)。
+# 消せるのは自分のルームの参加者の発言だけで、システムメッセージは対象外。
+# 全員の画面・つながった相手ルームからは次のpollで消える。Discordに送った分は消せない
+@bp.route("/admin/message-delete", methods=["POST"])
+def admin_delete_message():
+    data = request.get_json()
+    err = require_admin(data)
+    if err:
+        return err
+    mid = (data.get("id") or "").strip()
+    target = next((m for m in messages if mid and m.get("id") == mid and not m.get("system")), None)
+    if target is None:
+        return jsonify({"error": "not found"}), 404
+    # list.removeは1回の操作で済むので、同時に届いた発言のappendを取りこぼさない
+    messages.remove(target)
+    if target.get("image"):
+        message_images.pop(target["image"], None)
     return jsonify({"ok": True})
 
 # ルームの設定パネルを開くときの取得: 管理者合言葉必須(kickと同型のゲート)。
