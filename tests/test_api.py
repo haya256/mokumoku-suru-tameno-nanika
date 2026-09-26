@@ -127,6 +127,32 @@ def test_admin_delete_message(client):
     assert client.get(f"/message-image/{msg['image']}.webp").status_code == 404
 
 
+@pytest.mark.parametrize("path", ["/messages", "/board", "/status", "/world"])
+def test_poll_skips_unchanged_body(client, path):
+    res = client.get(path)
+    etag = res.headers.get("ETag")
+    assert res.status_code == 200 and etag and res.headers["Cache-Control"] == "no-cache"
+    res = client.get(path, headers={"If-None-Match": etag})
+    assert res.status_code == 304 and res.data == b""
+
+
+def test_poll_sends_body_after_change(client):
+    etag = client.get("/messages").headers["ETag"]
+    res = join(client)
+    assert "ETag" not in res.headers
+    res = client.get("/messages", headers={"If-None-Match": etag})
+    assert res.status_code == 200 and any("入室" in m["text"] for m in res.get_json())
+
+
+def test_poll_sends_body_after_delete(client):
+    seat = join_seat(client)
+    msg = post_message(client, seat=seat, text="けしてね").get_json()
+    etag = client.get("/messages").headers["ETag"]
+    admin_post(client, "/admin/message-delete", id=msg["id"])
+    res = client.get("/messages", headers={"If-None-Match": etag})
+    assert res.status_code == 200 and all(m["text"] != "けしてね" for m in res.get_json())
+
+
 def test_admin_label_uses_actor_name(client):
     join(client)
     admin_post(client, "/admin/area", action="add", kind="clock", name="時計A", actorId="u1")

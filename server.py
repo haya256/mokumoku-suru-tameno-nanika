@@ -4,7 +4,7 @@ import os
 import threading
 import time
 
-from flask import Flask
+from flask import Flask, request
 
 from mokumoku.peers import peer_poll_loop
 from mokumoku.routes import images, npc, room, world
@@ -25,6 +25,19 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 6 * 1024 * 1024
 for module in (room, world, npc, images):
     app.register_blueprint(module.bp)
+
+# ブラウザが2秒ごとに取り直すpoll先。本体からETagを作り、前回と変わっていなければ
+# 304(本体なし)だけを返す。ブラウザは手元の前回分をそのまま使うので、クライアント側の変更は要らない。
+# 問い合わせ自体は残る(サーバーに聞かないと変化の有無が分からないため)
+POLL_PATHS = {"/messages", "/board", "/status", "/world"}
+
+@app.after_request
+def skip_unchanged_poll(response):
+    if request.method == "GET" and request.path in POLL_PATHS and response.status_code == 200:
+        response.headers["Cache-Control"] = "no-cache"
+        response.add_etag()
+        response.make_conditional(request)
+    return response
 
 @app.route("/")
 def index():
