@@ -261,6 +261,10 @@ def test_room_title(client):
 def test_room_passphrase(client):
     res = admin_post(client, "/admin/room-images")
     assert res.get_json()["passphrase"] == PASSPHRASE
+    # 今の参加者合言葉を返すのは管理者にだけ。参加者合言葉や合言葉なしでは取れない
+    for body in ({}, {"passphrase": PASSPHRASE}):
+        res = client.post("/admin/room-images", json=body)
+        assert res.status_code == 403 and PASSPHRASE not in res.get_data(as_text=True)
     seat = join_seat(client, cid="before")
     try:
         assert admin_post(client, "/admin/room-passphrase", value="  あたらしい  ").status_code == 200

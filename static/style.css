@@ -652,6 +652,12 @@ body {
   width: 100%;
 }
 .room-title-form input { flex: 1; min-width: 0; }
+.room-passphrase-masked {
+  flex: 1;
+  align-self: center;
+  color: #555;
+  letter-spacing: 0.1em;
+}
 
 #roomSettingsPanel img {
   width: 64px;

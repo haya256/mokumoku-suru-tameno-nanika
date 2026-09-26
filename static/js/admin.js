@@ -100,7 +100,7 @@ async function toggleRoomSettingsPanel() {
   panel.id = "roomSettingsPanel";
   panel.append(
     roomSettingsSection("タイトル", buildRoomTextForm(roomTitleEl.textContent, 40, applyRoomTitle)),
-    roomSettingsSection("参加者合言葉", buildRoomTextForm(data.passphrase || "", 64, applyRoomPassphrase)),
+    roomSettingsSection("参加者合言葉", buildRoomPassphraseForm(data.passphrase || "")),
     roomSettingsSection("状態", ...ROOM_STATE_OPTIONS.map(({ value, label }) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -136,8 +136,8 @@ function roomSettingsSection(heading, ...items) {
   return section;
 }
 
-// 入力欄+「変更」ボタンの1行フォーム(タイトル・参加者合言葉で共用)
-function buildRoomTextForm(value, maxLength, onApply) {
+// 入力欄+ボタンの1行フォーム(タイトル・参加者合言葉で共用)
+function buildRoomTextForm(value, maxLength, onApply, buttonLabel = "変更") {
   const input = document.createElement("input");
   input.type = "text";
   input.maxLength = maxLength;
@@ -149,11 +149,31 @@ function buildRoomTextForm(value, maxLength, onApply) {
   });
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.textContent = "変更";
+  btn.textContent = buttonLabel;
   btn.addEventListener("click", apply);
   const wrap = document.createElement("div");
   wrap.className = "room-title-form";
   wrap.append(input, btn);
+  return wrap;
+}
+
+// 参加者合言葉は画面共有中などに見えないよう、開いた時点では伏せ字にしておく。
+// 「変更」を押したときだけ今の値を入力欄に出し、「保存」で確定する
+function buildRoomPassphraseForm(current) {
+  const masked = document.createElement("span");
+  masked.className = "room-passphrase-masked";
+  masked.textContent = current ? "●●●●●●●●" : "(未設定)";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "変更";
+  const wrap = document.createElement("div");
+  wrap.className = "room-title-form";
+  wrap.append(masked, btn);
+  btn.addEventListener("click", () => {
+    const form = buildRoomTextForm(current, 64, applyRoomPassphrase, "保存");
+    wrap.replaceWith(form);
+    form.querySelector("input").focus();
+  });
   return wrap;
 }
 
