@@ -47,7 +47,7 @@ def server(tmp_path_factory):
 @pytest.fixture
 def client(server):
     from mokumoku import settings, state
-    for store in (state.messages, state.board, state.custom_images, state.npc_images,
+    for store in (state.messages, state.board, state.seat_tokens, state.custom_images, state.npc_images,
                   state.message_images, state.area_images):
         store.clear()
     settings.update_settings(lambda s: s.setdefault("world", {}).update({"areas": []}))

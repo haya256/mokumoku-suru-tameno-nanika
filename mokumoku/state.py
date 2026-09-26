@@ -16,6 +16,9 @@ peer_message_images = {}  # (peer_id, image_id) -> bytes
 area_images = {}        # area_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
 _img_seq = 0  # キャッシュバスター用の通し番号。退室しても巻き戻さない(再入室時のキャッシュ誤爆防止)
 room_image_version = 0  # 部屋画像が変更されるたびに+1(クライアントが変化検知するためだけの値)
+# 入室証: 入室した本人にだけ渡す秘密の文字列。boardは/boardでそのまま公開されるので別に持つ。
+# 入室後の発言・編集・退室はこれで本人確認する(boardと同じく退室・強制退出・再起動で消える)
+seat_tokens = {}  # cid -> token
 ROOM_COUNT = 9
 
 # 空き部屋の確保〜board書き込みまでの間に別リクエストが割り込むと部屋番号が重複しうる

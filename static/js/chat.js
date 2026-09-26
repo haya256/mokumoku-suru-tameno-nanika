@@ -111,11 +111,12 @@ textEl.addEventListener("paste", async e => {
 
 form.addEventListener("submit", async e => {
   e.preventDefault();
-  const name = nameEl.value.trim();
   const text = textEl.value.trim();
-  if (!name || (!text && !pendingImage)) return;
-  const result = await postJson("/messages", { name, text, ...(pendingImage && { image: pendingImage }) });
+  if (!text && !pendingImage) return;
+  const result = await postJson("/messages", { id: clientId, seat: seatToken(), text, ...(pendingImage && { image: pendingImage }) });
   if (!result) return;
+  if (result.error === "not joined") { alert("入室してから発言してください"); return; }
+  if (result.error === "not your seat") { alert(NOT_YOUR_SEAT_MESSAGE); return; }
   textEl.value = "";
   textEl.style.height = "auto";
   clearPendingImage();

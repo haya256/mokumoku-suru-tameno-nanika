@@ -7,11 +7,11 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from mokumoku import settings, state
-from mokumoku.auth import admin_label, check_passphrase, is_admin_passphrase, require_admin
+from mokumoku.auth import admin_label, check_passphrase, is_admin_passphrase, require_admin, seat_entry
 from mokumoku.media import decode_chara_image, decode_chat_image
 from mokumoku.notify import add_system_message, discord_status, post_to_discord
-from mokumoku.settings import ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, list_room_images, room_title, set_room_image_setting, set_room_state_setting, set_room_title_setting
-from mokumoku.state import _board_lock, board, bump_room_image_version, custom_images, message_images, messages, next_img_seq, pick_free_room
+from mokumoku.settings import PASSPHRASE_MAX_LEN, ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, list_room_images, passphrase_file, read_secret_file, room_title, set_room_image_setting, set_room_state_setting, set_room_title_setting, write_passphrase
+from mokumoku.state import _board_lock, board, bump_room_image_version, custom_images, message_images, messages, next_img_seq, pick_free_room, seat_tokens
 
 # 自分のルーム: チャット・入退室・管理者によるルームの見た目の操作
 bp = Blueprint("room", __name__)
@@ -34,10 +34,13 @@ def get_messages():
 @bp.route("/messages", methods=["POST"])
 def post_message():
     data = request.get_json()
-    err = check_passphrase(data)
-    if err:
-        return err
-    name = data.get("name", "").strip()
+    # 発言できるのは入室中の本人だけ(入室証で確認)。名前も送られてきた値ではなく入室時に登録した名前を使う。
+    # NPCには入室証を発行しないので、NPCのidを名乗った発言もここで断られる
+    entry = seat_entry(data)
+    if not entry:
+        joined = ((data or {}).get("id") or "").strip() in board
+        return jsonify({"error": "not your seat" if joined else "not joined"}), 403
+    name = entry["name"]
     text = data.get("text", "").strip()
     image = data.get("image")
     image_id = None
@@ -47,8 +50,8 @@ def post_message():
             return jsonify({"error": "invalid image"}), 400
         image_id = secrets.token_urlsafe(8)
         message_images[image_id] = raw
-    if not name or (not text and not image_id):
-        return jsonify({"error": "name and text or image required"}), 400
+    if not text and not image_id:
+        return jsonify({"error": "text or image required"}), 400
     msg = {
         "name": name,
         "text": text,
@@ -69,10 +72,15 @@ def get_board():
 @bp.route("/board/join", methods=["POST"])
 def join_board():
     data = request.get_json()
-    err = check_passphrase(data)
-    if err:
-        return err
-    cid = (data.get("id") or "").strip()
+    cid = ((data or {}).get("id") or "").strip()
+    # 入室中の人の編集は入室証で本人確認する(合言葉は新規入室のときだけ)
+    if cid in board:
+        if not seat_entry(data):
+            return jsonify({"error": "not your seat"}), 403
+    else:
+        err = check_passphrase(data)
+        if err:
+            return err
     name = (data.get("name") or "").strip()
     task = (data.get("task") or "").strip()
     if not cid or not name or not task:
@@ -108,6 +116,9 @@ def join_board():
         admin_suffix = "（管理者）" if is_admin_passphrase((data.get("passphrase") or "").strip()) else ""
         until = f"〜{end}" if end else "〜"
         add_system_message(f"🟢 {name}{admin_suffix} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
+    if is_new:
+        seat_tokens[cid] = secrets.token_urlsafe(16)
+        return jsonify({**board[cid], "seatToken": seat_tokens[cid]}), 201
     return jsonify(board[cid]), 201
 
 # クライアントが今保持している合言葉が管理者合言葉と一致するか確認するだけの読み取り専用エンドポイント。
@@ -127,11 +138,13 @@ def kick_board():
     cid = (data.get("id") or "").strip()
     entry = board.pop(cid, None)
     custom_images.pop(cid, None)
+    seat_tokens.pop(cid, None)
     if entry:
         add_system_message(f"🚫 {entry['name']} が{admin_label(data)}によりルーム{entry['room']}から強制退室させられました")
     return jsonify({"ok": True})
 
-# 画像一覧取得: 管理者合言葉必須(kickと同型のゲート)。画像バイト自体はroom_image_previewで別途取得させる
+# ルームの設定パネルを開くときの取得: 管理者合言葉必須(kickと同型のゲート)。
+# 画像一覧と、参加者に伝えるための今の参加者合言葉を返す。画像バイト自体はroom_image_previewで別途取得させる
 @bp.route("/admin/room-images", methods=["POST"])
 def admin_room_images():
     data = request.get_json()
@@ -139,7 +152,8 @@ def admin_room_images():
     if err:
         return err
     current_path = settings.load_settings().get("appearance", {}).get("room_image") or f"{ROOM_IMAGE_DIR}/room-image-1.webp"
-    return jsonify({"images": list_room_images(), "current": os.path.basename(current_path)})
+    return jsonify({"images": list_room_images(), "current": os.path.basename(current_path),
+                    "passphrase": read_secret_file(passphrase_file()) or ""})
 
 # 画像変更の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
 @bp.route("/admin/room-image", methods=["POST"])
@@ -187,15 +201,35 @@ def admin_set_room_title():
     add_system_message(f"🏷️ {admin_label(data)}がタイトルを「{title}」に変更しました")
     return jsonify({"ok": True, "title": title})
 
+# 参加者合言葉の変更: 管理者合言葉と同じ値にすると参加者全員が管理者になってしまうので断る。
+# 入室中の人は入室証で本人確認するので、変更後も聞き直されずに続けられる(auth.seat_entry参照)。
+# 合言葉そのものは閲覧自由のチャットに流さない(知った見る専の人が書き込めてしまうため)
+@bp.route("/admin/room-passphrase", methods=["POST"])
+def admin_set_room_passphrase():
+    data = request.get_json()
+    err = require_admin(data)
+    if err:
+        return err
+    value = (data.get("value") or "").strip()
+    if not value or len(value) > PASSPHRASE_MAX_LEN:
+        return jsonify({"error": "invalid passphrase"}), 400
+    if is_admin_passphrase(value):
+        return jsonify({"error": "same as admin passphrase"}), 400
+    write_passphrase(value)
+    add_system_message(f"🔑 {admin_label(data)}が参加者合言葉を変更しました")
+    return jsonify({"ok": True})
+
 @bp.route("/board/leave", methods=["POST"])
 def leave_board():
     data = request.get_json()
-    err = check_passphrase(data)
-    if err:
-        return err
-    cid = (data.get("id") or "").strip()
+    cid = ((data or {}).get("id") or "").strip()
+    if cid not in board:
+        return jsonify({"ok": True})
+    if not seat_entry(data):
+        return jsonify({"error": "not your seat"}), 403
     entry = board.pop(cid, None)
     custom_images.pop(cid, None)  # 画像はその入室の間だけ有効
+    seat_tokens.pop(cid, None)
     if not entry:
         return jsonify({"ok": True})
     now = datetime.now()

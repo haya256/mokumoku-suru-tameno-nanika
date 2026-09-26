@@ -11,6 +11,7 @@ ROOM_IMAGE_DIR = "assets"
 ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
 DEFAULT_ROOM_TITLE = "もくもく会"
 ROOM_TITLE_MAX_LEN = 40
+PASSPHRASE_MAX_LEN = 64
 _settings_write_lock = threading.Lock()
 
 # 設定は毎回読む(サーバー再起動なしでモード切替できるようにするため)
@@ -82,6 +83,28 @@ def read_secret_file(path):
     except OSError:
         return None
     return value or None
+
+# 参加者合言葉ファイルの場所。settings.jsonのsecurity.passphrase_fileで差し替えられる
+def passphrase_file():
+    return load_settings().get("security", {}).get("passphrase_file", DEFAULT_PASSPHRASE_FILE)
+
+# 参加者合言葉を書き換える。valueは空でなく長さ上限内であることを検証済みの前提。
+# save_settingsと同じくtmpファイル+os.replaceで置換し、書き込み途中で落ちても合言葉が消えないようにする
+def write_passphrase(value):
+    path = passphrase_file()
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".passphrase-", suffix=".txt.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(value + "\n")
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 # 部屋画像として選択可能なファイルの一覧。命名規則を正規表現で完全一致させることで、
 # 以降の処理はこの戻り値に含まれるかどうかだけで判定でき、パストラバーサルの余地がない

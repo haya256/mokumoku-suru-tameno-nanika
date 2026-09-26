@@ -5,8 +5,23 @@ from mokumoku import peers, state
 from mokumoku.areas import MAX_AREAS
 
 
-def join(client, cid="u1", name="たろう", task="読書", passphrase=PASSPHRASE):
-    return client.post("/board/join", json={"id": cid, "name": name, "task": task, "passphrase": passphrase})
+def join(client, cid="u1", name="たろう", task="読書", passphrase=PASSPHRASE, seat=None):
+    return client.post("/board/join", json={"id": cid, "name": name, "task": task, "passphrase": passphrase, "seat": seat})
+
+
+# 入室して入室証を受け取る
+def join_seat(client, cid="u1", **kw):
+    res = join(client, cid=cid, **kw)
+    assert res.status_code == 201
+    return res.get_json()["seatToken"]
+
+
+def leave(client, cid="u1", seat=None):
+    return client.post("/board/leave", json={"id": cid, "seat": seat})
+
+
+def post_message(client, cid="u1", seat=None, text="こんにちは", **extra):
+    return client.post("/messages", json={"id": cid, "seat": seat, "text": text, **extra})
 
 
 def admin_post(client, endpoint, **body):
@@ -26,7 +41,7 @@ def test_join_and_leave(client):
     assert entry["name"] == "たろう" and 1 <= entry["room"] <= 9
     assert [e["id"] for e in client.get("/board").get_json()] == ["u1"]
 
-    res = client.post("/board/leave", json={"id": "u1", "passphrase": PASSPHRASE})
+    res = leave(client, seat=entry["seatToken"])
     assert res.status_code == 200 and "読書" in res.get_json()["record"]
     assert client.get("/board").get_json() == []
     texts = system_texts(client)
@@ -45,9 +60,46 @@ def test_rooms_fill_up(client):
 
 
 def test_post_message(client):
-    res = client.post("/messages", json={"name": "たろう", "text": "こんにちは", "passphrase": PASSPHRASE})
-    assert res.status_code == 201
-    assert client.get("/messages").get_json()[-1]["text"] == "こんにちは"
+    seat = join_seat(client)
+    # 名前は送られてきた値ではなく入室時の名前になる
+    assert post_message(client, seat=seat, name="にせもの").status_code == 201
+    last = client.get("/messages").get_json()[-1]
+    assert last["text"] == "こんにちは" and last["name"] == "たろう"
+
+
+def test_post_message_requires_join(client):
+    assert post_message(client, cid="nobody").status_code == 403
+    admin_post(client, "/admin/npc", action="add", kind="basic", name="NPC", task="見守り")
+    npc_id = next(e["id"] for e in client.get("/board").get_json() if e.get("npc"))
+    assert post_message(client, cid=npc_id).status_code == 403
+    assert leave(client, cid=npc_id).status_code == 403
+    seat = join_seat(client)
+    leave(client, seat=seat)
+    assert post_message(client, seat=seat).status_code == 403
+
+
+# 入室中の人のIDは/boardで誰でも見られるが、入室証がないとその人として操作できない
+def test_seat_prevents_impersonation(client):
+    seat_a = join_seat(client, cid="a", name="Aさん")
+    seat_b = join_seat(client, cid="b", name="Bさん")
+    assert all("seatToken" not in e and "seat" not in e for e in client.get("/board").get_json())
+    for seat in (None, "", seat_b):
+        assert post_message(client, cid="a", seat=seat).status_code == 403
+        assert join(client, cid="a", name="のっとり", seat=seat).status_code == 403
+        assert leave(client, cid="a", seat=seat).status_code == 403
+    board = {e["id"]: e for e in client.get("/board").get_json()}
+    assert board["a"]["name"] == "Aさん"
+    # 本人は入室証で編集できる(編集では新しい入室証は発行しない)
+    res = join(client, cid="a", name="Aさん2", seat=seat_a)
+    assert res.status_code == 201 and "seatToken" not in res.get_json()
+    assert post_message(client, cid="a", seat=seat_a).status_code == 201
+
+
+def test_kicked_seat_is_revoked(client):
+    seat = join_seat(client)
+    admin_post(client, "/board/kick", id="u1")
+    assert post_message(client, seat=seat).status_code == 403
+    assert join(client, seat=seat, passphrase="ちがう").status_code == 401
 
 
 def test_admin_label_uses_actor_name(client):
@@ -204,6 +256,30 @@ def test_room_title(client):
     assert admin_post(client, "/admin/room-title", title="あ" * 41).status_code == 400
     from mokumoku import settings
     settings.update_settings(lambda s: s["appearance"].pop("title"))
+
+
+def test_room_passphrase(client):
+    res = admin_post(client, "/admin/room-images")
+    assert res.get_json()["passphrase"] == PASSPHRASE
+    seat = join_seat(client, cid="before")
+    try:
+        assert admin_post(client, "/admin/room-passphrase", value="  あたらしい  ").status_code == 200
+        # 変更前から入室中の人は入室証で本人確認されるので、聞き直されずに続けられる
+        assert post_message(client, cid="before", seat=seat).status_code == 201
+        assert join(client, cid="before", seat=seat, passphrase=PASSPHRASE).status_code == 201
+        assert leave(client, cid="before", seat=seat).status_code == 200
+        assert join(client, cid="before", passphrase=PASSPHRASE).status_code == 401
+        assert admin_post(client, "/admin/room-images").get_json()["passphrase"] == "あたらしい"
+        assert join(client, passphrase=PASSPHRASE).status_code == 401
+        assert join(client, passphrase="あたらしい").status_code == 201
+        texts = system_texts(client)
+        assert any("参加者合言葉を変更" in t for t in texts) and not any("あたらしい" in t for t in texts)
+        assert admin_post(client, "/admin/room-passphrase", value="   ").status_code == 400
+        assert admin_post(client, "/admin/room-passphrase", value="あ" * 65).status_code == 400
+        assert admin_post(client, "/admin/room-passphrase", value=ADMIN_PASSPHRASE).status_code == 400
+        assert client.post("/admin/room-passphrase", json={"passphrase": "あたらしい", "value": "x"}).status_code == 403
+    finally:
+        admin_post(client, "/admin/room-passphrase", value=PASSPHRASE)
 
 
 def test_index_served(client, server, monkeypatch):

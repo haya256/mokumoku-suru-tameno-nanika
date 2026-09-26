@@ -72,6 +72,10 @@ if (!clientId) {
   clientId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   localStorage.setItem("mokumoku-id", clientId);
 }
+// 入室証: 入室したときにサーバーから受け取る、本人だけが知っている文字列。
+// 入室後の発言・編集・退室はIDと一緒にこれを送って本人確認してもらう
+const seatToken = () => localStorage.getItem("mokumoku-seat") || "";
+const NOT_YOUR_SEAT_MESSAGE = "入室中の本人と確認できませんでした。管理者に強制退出してもらってから入り直してください";
 const ROOM_COUNT = 9;
 // 3×3マップの中央は自分のルーム固定。ピアのslot(0〜7)は周囲8マスに対応する
 const SELF_INDEX = 4;

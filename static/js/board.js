@@ -86,16 +86,21 @@ joinBtn.addEventListener("click", async () => {
       return;
     }
   }
-  const result = await postJson("/board/join", { id: clientId, name, task, start: startEl.value, end: endEl.value, ...(image && { image }) });
+  const result = await postJson("/board/join", { id: clientId, seat: seatToken(), name, task, start: startEl.value, end: endEl.value, ...(image && { image }) });
   if (!result) return;
   if (result.roomFull) {
     alert("満室です。空きが出るまでお待ちください");
+    return;
+  }
+  if (result.error === "not your seat") {
+    alert(NOT_YOUR_SEAT_MESSAGE);
     return;
   }
   if (result.error) {
     alert("入室に失敗しました: " + result.error);
     return;
   }
+  if (result.seatToken) localStorage.setItem("mokumoku-seat", result.seatToken);
   // 送信済みの画像はクリア(編集モードで再送しない=サーバー側で維持される)
   charaEl.value = "";
   recordRow.style.display = "none";
@@ -143,8 +148,10 @@ goReceptionBtn.addEventListener("click", () => {
 
 leaveBtn.addEventListener("click", async () => {
   if (!confirm("退室しますか？")) return;
-  const result = await postJson("/board/leave", { id: clientId });
+  const result = await postJson("/board/leave", { id: clientId, seat: seatToken() });
   if (!result) return;
+  if (result.error === "not your seat") { alert(NOT_YOUR_SEAT_MESSAGE); return; }
+  localStorage.removeItem("mokumoku-seat");
   // 退室したら合言葉を覚えたままにしない。次回入室時に必ず聞き直すことで、
   // 同じブラウザでも管理者合言葉に切り替えて入り直せるようにする
   localStorage.removeItem("mokumoku-passphrase");

@@ -77,8 +77,8 @@ const ROOM_STATE_OPTIONS = [
   { value: "closed", label: "Closed" },
 ];
 
-// ルームの設定: 状態・部屋画像・タイトルをまとめたパネル。
-// 状態とタイトルの現在値はpollで既に持っているので、問い合わせが要るのは画像一覧だけ
+// ルームの設定: タイトル・参加者合言葉・状態・部屋画像をまとめたパネル。
+// 状態とタイトルの現在値はpollで既に持っているので、問い合わせが要るのは画像一覧と参加者合言葉だけ
 async function toggleRoomSettingsPanel() {
   const existingPanel = document.getElementById("roomSettingsPanel");
   if (existingPanel) { existingPanel.remove(); return; }
@@ -99,7 +99,8 @@ async function toggleRoomSettingsPanel() {
   const panel = document.createElement("div");
   panel.id = "roomSettingsPanel";
   panel.append(
-    roomSettingsSection("タイトル", buildRoomTitleForm()),
+    roomSettingsSection("タイトル", buildRoomTextForm(roomTitleEl.textContent, 40, applyRoomTitle)),
+    roomSettingsSection("参加者合言葉", buildRoomTextForm(data.passphrase || "", 64, applyRoomPassphrase)),
     roomSettingsSection("状態", ...ROOM_STATE_OPTIONS.map(({ value, label }) => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -135,12 +136,14 @@ function roomSettingsSection(heading, ...items) {
   return section;
 }
 
-function buildRoomTitleForm() {
+// 入力欄+「変更」ボタンの1行フォーム(タイトル・参加者合言葉で共用)
+function buildRoomTextForm(value, maxLength, onApply) {
   const input = document.createElement("input");
   input.type = "text";
-  input.maxLength = 40;
-  input.value = roomTitleEl.textContent;
-  const apply = () => applyRoomTitle(input.value.trim());
+  input.maxLength = maxLength;
+  input.value = value;
+  input.autocomplete = "off";
+  const apply = () => onApply(input.value.trim());
   input.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); apply(); }
   });
@@ -174,6 +177,32 @@ async function applyRoomTitle(title) {
   roomTitleEl.textContent = data.title;
   document.title = data.title;
   renderWorld();
+}
+
+const ROOM_PASSPHRASE_ERRORS = {
+  "same as admin passphrase": "管理者合言葉と同じにはできません",
+};
+
+async function applyRoomPassphrase(value) {
+  if (!value) { alert("参加者合言葉を入力してください"); return; }
+  if (!confirm(`参加者合言葉を「${value}」に変更しますか？\n入室中の人はそのまま続けられます。新しく入室する人には新しい合言葉が必要です`)) return;
+  const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+  try {
+    const res = await fetch("/admin/room-passphrase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase, value, actorId: clientId }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(ROOM_PASSPHRASE_ERRORS[data.error] || "参加者合言葉の変更に失敗しました");
+      return;
+    }
+  } catch {
+    alert("参加者合言葉の変更に失敗しました");
+    return;
+  }
+  document.getElementById("roomSettingsPanel")?.remove();
 }
 
 async function applyRoomImage(name) {
