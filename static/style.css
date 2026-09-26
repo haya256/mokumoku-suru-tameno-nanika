@@ -1041,8 +1041,32 @@ header {
   background: #fee;
 }
 
+/* 置き物NPC(時計・カレンダーなど)は行を分けず、横に詰めて並べる */
+#othersHeading { margin-top: 10px; }
+
+#others {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 0.9rem;
+}
+
+.other {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.other .room {
+  background: #333;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+}
+
 /* つながった相手ルーム由来の行・発言は、自分のルームのものと色で区別する */
-.entry.remote .room { background: #4a6b8a; }
+.entry.remote .room, .other.remote .room { background: #4a6b8a; }
 
 .msg.remote { border-left: 3px solid #4a6b8a; }
 .msg.system.remote { border-left: none; }

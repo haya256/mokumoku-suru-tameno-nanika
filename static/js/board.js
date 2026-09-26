@@ -8,18 +8,27 @@ function renderBoard(entries) {
     ...entries.map(e => ({ e, room: `Room ${e.room}`, local: true })),
     ...peerAreas().flatMap(p => (p.board || []).map(e => ({ e, room: `${p.name} #${e.room}`, local: false }))),
   ];
-  if (rows.length === 0) {
+  // 時計やカレンダーなどの置き物NPCは開始・終了時刻を持たない。
+  // 参加者とは分けて「その他」に、行を分けず1か所にまとめて並べる
+  const friends = rows.filter(({ e }) => occupantKind(e.kind).hasSchedule);
+  const others = rows.filter(({ e }) => !occupantKind(e.kind).hasSchedule);
+  othersHeadingEl.style.display = others.length ? "" : "none";
+  othersEl.innerHTML = "";
+  others.forEach(({ e, room, local }) => {
+    const span = document.createElement("span");
+    span.className = local ? "other" : "other remote";
+    span.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span>`;
+    othersEl.appendChild(span);
+  });
+  if (friends.length === 0) {
     entriesEl.innerHTML = `<div class="empty">まだ誰ももくもくしていません</div>`;
     return;
   }
   entriesEl.innerHTML = "";
-  rows.forEach(({ e, room, local }) => {
+  friends.forEach(({ e, room, local }) => {
     const div = document.createElement("div");
     div.className = local ? "entry" : "entry remote";
-    // 時計やカレンダーなどの置き物NPCは開始・終了時刻を持たないので、時間欄ごと出さない
-    const when = occupantKind(e.kind).hasSchedule
-      ? `<span class="when">${esc(e.start)}〜${esc(e.end || "?")}</span>` : "";
-    div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span>${when}<span class="what">${esc(e.task)}</span>`;
+    div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span><span class="when">${esc(e.start)}〜${esc(e.end || "?")}</span><span class="what">${esc(e.task)}</span>`;
     // 相手サーバーの参加者は操作できないので強制退出ボタンは出さない。
     // NPCの片付けは強制退出とは別のライフサイクル(NPC管理パネル)で行うのでここには出さない
     if (local && isAdmin && e.id !== clientId && !e.npc) {
