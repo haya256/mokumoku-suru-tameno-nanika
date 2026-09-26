@@ -65,7 +65,7 @@ taskEl.addEventListener("input", () => {
 joinBtn.addEventListener("click", async () => {
   const name = nameEl.value.trim();
   const task = taskEl.value.trim();
-  if (!name) { alert("名前を入力してください"); nameEl.focus(); return; }
+  if (!name) { alert("もくもくネームを入力してください"); nameEl.focus(); return; }
   if (!task) { alert("もくもくする内容を入力してください"); taskEl.focus(); return; }
   let image = null;
   if (charaEl.files[0]) {

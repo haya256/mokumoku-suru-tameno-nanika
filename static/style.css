@@ -1255,7 +1255,7 @@ textarea {
   overflow-y: auto;
 }
 
-#name { width: 100px; flex-shrink: 0; }
+#name { width: 300px; max-width: 100%; flex-shrink: 0; margin-right: 16px; }
 #text { flex: 1; }
 #task { flex: 1; min-width: 0; }
 
