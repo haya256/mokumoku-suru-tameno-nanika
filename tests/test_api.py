@@ -206,10 +206,13 @@ def test_room_title(client):
     settings.update_settings(lambda s: s["appearance"].pop("title"))
 
 
-def test_index_served(client, server):
-    # server.pyはindex.htmlを作業ディレクトリから配信するため、テストでは一時的にリポジトリを指す
+def test_index_served(client, server, monkeypatch):
+    # server.pyはindex.htmlを作業ディレクトリから配信するため、テストでは一時的にリポジトリを指す。
+    # 設定まで手元の本物(config/settings.json)を読むとタイトルが環境依存になるので、テスト用の設定に固定する
     import os
     from conftest import REPO_ROOT
+    from mokumoku import settings
+    monkeypatch.setattr(settings, "SETTINGS_FILE", os.path.abspath(settings.SETTINGS_FILE))
     cwd = os.getcwd()
     os.chdir(REPO_ROOT)
     try:
