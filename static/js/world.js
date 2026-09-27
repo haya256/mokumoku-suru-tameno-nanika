@@ -17,6 +17,16 @@ for (let i = 0; i < 9; i++) {
     cell.className = "cell";
     overlay.appendChild(cell);
   }
+  // チャットの吹き出し専用の層。部屋セルは入退室のたびに作り直されるので(renderRoomInto)、
+  // 同じ場所に置くと吹き出しの出し入れのたびにキャラのアニメーションがリセットされてしまう。
+  // 別の層にしておけば互いに干渉しない。クリックはpointer-events:noneで下のキャラに通す
+  const bubbleOverlay = document.createElement("div");
+  bubbleOverlay.className = "bubble-overlay";
+  for (let r = 0; r < ROOM_COUNT; r++) {
+    const slot = document.createElement("div");
+    slot.className = "bubble-slot";
+    bubbleOverlay.appendChild(slot);
+  }
   const label = document.createElement("span");
   label.className = "tile-label";
   const status = document.createElement("span");
@@ -36,11 +46,12 @@ for (let i = 0; i < 9; i++) {
                  // 部屋セル内で再生中のYouTube NPC(あれば)のid/表示名。tile.playing(エリア用)とは
                  // 別に持つ(1つのtileが同時に両方を再生することはない設計だが、意味が違うので分ける)
                  playingNpcId: null, playingNpcName: null,
-                 cells: [...overlay.children], key: null, lastState: "" };
+                 cells: [...overlay.children], bubbleSlots: [...bubbleOverlay.children],
+                 key: null, lastState: "" };
   // 種別ごとの常設部品(YouTubeのプレイヤー、時計の文字盤など)。普段は隠れていて、
   // そのマスがその種別になったときだけCSS(.tile.<種別>)で出す
   const parts = kindList().flatMap(k => k.buildTileParts?.(tile) || []);
-  el.append(img, overlay, label, status, ...parts, roomStateOverlay);
+  el.append(img, overlay, bubbleOverlay, label, status, ...parts, roomStateOverlay);
   worldMapEl.appendChild(el);
   tiles.push(tile);
 }
@@ -49,8 +60,9 @@ for (let i = 0; i < 9; i++) {
 // charaUrl はカスタム画像のURLを組み立てる関数(自分とピアで参照先が変わる)。
 // roomLabel はステータスウィンドウでの表示用(自分ならnull、ピアなら相手ルーム名)
 // visible はこのタイルが今画面に見えているか(時計エリアと同じ意味・同じ値)。
-// 時計NPCの位相合わせは下部でfingerprintの変化と無関係に毎回チェックするため必要
-function renderRoomInto(tile, entries, charaUrl, roomLabel, visible) {
+// 時計NPCの位相合わせは下部でfingerprintの変化と無関係に毎回チェックするため必要。
+// messages はその部屋のチャット(吹き出しを出すのに使う)
+function renderRoomInto(tile, entries, charaUrl, roomLabel, visible, messages) {
   // ポーズ(0〜2)は入室時にサーバーが決めて退室まで固定。ピア由来の値は信用せず範囲に丸める。
   // npc/kindはNPC機能由来のフィールドで、実参加者やkind未指定のNPCはbasic扱いにフォールバックする
   const occupants = (entries || []).map(e => ({
@@ -93,6 +105,42 @@ function renderRoomInto(tile, entries, charaUrl, roomLabel, visible) {
   // 見えている間はfingerprintが変わらなくても毎pollチェックする(時計の位相合わせなど。
   // 非表示中に直しても無駄なうえ、表示された瞬間にCSSアニメーションが作り直した時刻で復活するため)
   if (visible) tile.liveCells.forEach(upkeep => upkeep());
+  renderBubbles(tile, occupants, messages);
+}
+
+// 発言してからこの秒数のあいだ、キャラの上に吹き出しを出す
+const BUBBLE_SECONDS = 60;
+
+// 各キャラの直近の発言を吹き出しで出す。pollのたびに呼ばれるので、時間切れの吹き出しはここで消える
+// (発言時刻はサーバーのts、今の時刻は端末の時計で比べる)。本文を出すか「…」だけにするかは
+// 拡大表示かどうかでCSSが切り替える(.cell .badge と同じ流儀)
+function renderBubbles(tile, occupants, messages) {
+  const now = Date.now() / 1000;
+  const latest = new Map(); // uid -> 吹き出しに出す文字列
+  (messages || []).forEach(m => {
+    if (m.system || !m.uid || typeof m.ts !== "number" || now - m.ts > BUBBLE_SECONDS) return;
+    // 配列は古い順なので、後から来たもので上書きすれば最新の発言が残る
+    latest.set(String(m.uid), String(m.text ?? "") || (m.image ? "📷" : ""));
+  });
+  tile.bubbleSlots.forEach((slot, i) => {
+    const o = occupants.find(o => o.room === i + 1);
+    const text = (o && latest.get(o.id)) || "";
+    // 前回と同じなら触らない(毎pollでDOMを作り直さない)
+    if (slot.dataset.text === text) return;
+    slot.dataset.text = text;
+    slot.innerHTML = "";
+    if (!text) return;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    const body = document.createElement("span");
+    body.className = "bubble-text";
+    body.textContent = text;
+    const dots = document.createElement("span");
+    dots.className = "bubble-dots";
+    dots.textContent = "…";
+    bubble.append(body, dots);
+    slot.appendChild(bubble);
+  });
 }
 
 // 部屋セルの名前バッジ
@@ -220,6 +268,8 @@ function resetTile(tile) {
   tile.lastState = "";
   tile.status.hidden = true;
   tile.roomStateOverlay.hidden = true;
+  // 部屋を持たない種別(時計など)はrenderRoomIntoを呼ばないので、前のエリアの吹き出しをここで消す
+  tile.bubbleSlots.forEach(slot => { slot.innerHTML = ""; slot.dataset.text = ""; });
   kindList().forEach(k => k.resetTile?.(tile));
 }
 
@@ -248,7 +298,7 @@ function renderWorld() {
       setClass(tile.el, `tile self${focused}`);
       tile.label.textContent = `${roomTitleEl.textContent}（このルーム）`;
       tile.status.hidden = true;
-      renderRoomInto(tile, lastEntries, selfCharaUrl, null, visible);
+      renderRoomInto(tile, lastEntries, selfCharaUrl, null, visible, localMessages);
       const stateLabel = ROOM_STATE_LABELS[roomState];
       tile.roomStateOverlay.hidden = !stateLabel;
       if (stateLabel) tile.roomStateText.textContent = stateLabel;

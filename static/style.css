@@ -902,6 +902,71 @@ body {
   50% { transform: translateY(-3px); }
 }
 
+/* チャットの吹き出し。部屋セルと同じ3×3グリッドを別の層(.bubble-overlay)に重ね、
+   キャラの頭上に出す。クリックは下のキャラに通す(ステータスウィンドウを開けるように) */
+.bubble-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  pointer-events: none;
+}
+
+.bubble-slot { position: relative; }
+
+/* マスは正方形なので、キャラの頭の高さはセルの幅から決まる(.cellのpaddingと.charaの大きさから計算。
+   中段・下段はセルの上から28%、上段は34%)。吹き出しの下端をそのあたりにそろえる。
+   上段は計算より少し下げたほうが頭に近く見えるので、目で見て合わせた値 */
+.bubble {
+  position: absolute;
+  left: 50%;
+  bottom: 74%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 96%;
+  background: #fff;
+  color: #222;
+  border: 1px solid #555;
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+.bubble-slot:nth-child(-n+3) .bubble { bottom: 63%; }
+
+/* 下向きのしっぽ。外側の三角(枠線の色)に内側の三角(白)を重ねて縁取りに見せる */
+.bubble::before, .bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-style: solid;
+  border-color: transparent;
+}
+.bubble::before { top: 100%; border-width: 5px 4px 0; border-top-color: #555; }
+.bubble::after { top: calc(100% - 1px); border-width: 4px 3px 0; border-top-color: #fff; }
+
+/* ワールドマップ(縮小表示)では本文を出さず「…」だけ。拡大したマスだけで本文を出す */
+.bubble-text { display: none; }
+.tile.focused .bubble-dots { display: none; }
+.tile.focused .bubble {
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+/* 収まらない長さのセリフは3行目の末尾を「…」にして打ち切る。改行はそのまま生かす */
+.tile.focused .bubble-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cell .badge {
   position: absolute;
   bottom: 5%;

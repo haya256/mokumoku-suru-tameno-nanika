@@ -11,7 +11,7 @@ registerKind({
     tile.label.textContent = area.ok === true ? `${area.name} (${(area.board || []).length}人)` : area.name;
     tile.status.hidden = area.ok === true;
     tile.status.textContent = PEER_STATUS[area.ok] || "";
-    renderRoomInto(tile, area.board, peerCharaUrl(area.id), area.name, visible);
+    renderRoomInto(tile, area.board, peerCharaUrl(area.id), area.name, visible, area.messages);
   },
 
   area: {

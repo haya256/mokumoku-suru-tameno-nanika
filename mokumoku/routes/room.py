@@ -52,9 +52,11 @@ def post_message():
         message_images[image_id] = raw
     if not text and not image_id:
         return jsonify({"error": "text or image required"}), 400
-    # idは管理者が発言を削除するときの指定用
+    # idは管理者が発言を削除するときの指定用。uidは発言者の入室ID(/boardで公開済みの値)で、
+    # ルームのキャラに吹き出しを出すときに発言とキャラを結び付けるのに使う(名前は重複しうるため)
     msg = {
         "id": secrets.token_urlsafe(8),
+        "uid": entry["id"],
         "name": name,
         "text": text,
         "time": datetime.now().strftime("%H:%M"),

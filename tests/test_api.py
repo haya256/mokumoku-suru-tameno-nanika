@@ -65,6 +65,8 @@ def test_post_message(client):
     assert post_message(client, seat=seat, name="にせもの").status_code == 201
     last = client.get("/messages").get_json()[-1]
     assert last["text"] == "こんにちは" and last["name"] == "たろう"
+    # キャラの吹き出しと結び付けるための発言者ID
+    assert last["uid"] == "u1"
 
 
 def test_post_message_requires_join(client):
