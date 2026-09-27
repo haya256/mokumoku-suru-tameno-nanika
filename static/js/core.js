@@ -60,6 +60,14 @@ let roomImageVersion = null;
 let pendingImageVersion = null; // ジッター待ち中のバージョン(同じ変化に対して二重にsetTimeoutしない)
 // ルームの見た目状態。normal以外なら自分のルームに演出オーバーレイを出す(renderWorld参照)
 let roomState = "normal";
+// ブラウザのタブに出す絵文字(ルームの設定で変えられる)。表示直後の値はサーバーがindex.htmlに埋め込んで返す
+let roomFavicon = "";
+const faviconEl = document.getElementById("favicon");
+function setFavicon(emoji) {
+  roomFavicon = emoji;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${esc(emoji)}</text></svg>`;
+  faviconEl.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
 const ROOM_STATE_LABELS = { preparing: "準備中", closed: "～ おしまい ～\nご参加、ご視聴ありがとうございました！" };
 nameEl.value = localStorage.getItem("mokumoku-name") || "";
 // 入室を待たず、名前欄の変更時点で即保存する

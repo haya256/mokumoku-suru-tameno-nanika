@@ -94,8 +94,8 @@ const ROOM_STATE_OPTIONS = [
   { value: "closed", label: "Closed" },
 ];
 
-// ルームの設定: タイトル・参加者合言葉・状態・部屋画像をまとめたパネル。
-// 状態とタイトルの現在値はpollで既に持っているので、問い合わせが要るのは画像一覧と参加者合言葉だけ
+// ルームの設定: タイトル・ファビコン・参加者合言葉・状態・部屋画像をまとめたパネル。
+// 状態・タイトル・ファビコンの現在値はpollで既に持っているので、問い合わせが要るのは画像一覧と参加者合言葉だけ
 async function toggleRoomSettingsPanel() {
   const existingPanel = document.getElementById("roomSettingsPanel");
   if (existingPanel) { existingPanel.remove(); return; }
@@ -117,6 +117,7 @@ async function toggleRoomSettingsPanel() {
   panel.id = "roomSettingsPanel";
   panel.append(
     roomSettingsSection("タイトル", buildRoomTextForm(roomTitleEl.textContent, 40, applyRoomTitle)),
+    roomSettingsSection("ファビコン", buildRoomTextForm(roomFavicon, 16, applyRoomFavicon)),
     roomSettingsSection("参加者合言葉", buildRoomPassphraseForm(data.passphrase || "")),
     roomSettingsSection("状態", ...ROOM_STATE_OPTIONS.map(({ value, label }) => {
       const btn = document.createElement("button");
@@ -214,6 +215,34 @@ async function applyRoomTitle(title) {
   roomTitleEl.textContent = data.title;
   document.title = data.title;
   renderWorld();
+}
+
+// 入力が絵文字1つ(見た目の1文字)かどうか。国旗や肌の色つきの絵文字は複数の文字でできているので、
+// 文字数ではなくIntl.Segmenterで見た目の区切りを数える
+function isSingleEmoji(value) {
+  if (!/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(value)) return false;
+  if (typeof Intl.Segmenter !== "function") return true;
+  return [...new Intl.Segmenter().segment(value)].length === 1;
+}
+
+async function applyRoomFavicon(favicon) {
+  if (!isSingleEmoji(favicon)) { alert("絵文字を1つ入力してください"); return; }
+  const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+  let data;
+  try {
+    const res = await fetch("/admin/room-favicon", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase, favicon, actorId: clientId }),
+    });
+    if (!res.ok) { alert("ファビコンの変更に失敗しました"); return; }
+    data = await res.json();
+  } catch {
+    alert("ファビコンの変更に失敗しました");
+    return;
+  }
+  document.getElementById("roomSettingsPanel")?.remove();
+  setFavicon(data.favicon);
 }
 
 const ROOM_PASSPHRASE_ERRORS = {

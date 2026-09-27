@@ -20,6 +20,9 @@ function renderStatus(status) {
     document.title = status.title;
     renderWorld();
   }
+  if (typeof status.favicon === "string" && status.favicon !== roomFavicon) {
+    setFavicon(status.favicon);
+  }
   if (typeof status.roomState === "string" && status.roomState !== roomState) {
     roomState = status.roomState;
     renderWorld();

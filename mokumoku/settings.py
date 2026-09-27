@@ -11,6 +11,9 @@ ROOM_IMAGE_DIR = "assets"
 ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
 DEFAULT_ROOM_TITLE = "もくもく会"
 ROOM_TITLE_MAX_LEN = 40
+# ファビコン(ブラウザのタブに出る絵文字)。国旗や肌の色つきなど、複数の文字を組み合わせた絵文字もあるので上限に余裕を持たせる
+DEFAULT_ROOM_FAVICON = "🏠"
+ROOM_FAVICON_MAX_LEN = 16
 PASSPHRASE_MAX_LEN = 64
 _settings_write_lock = threading.Lock()
 
@@ -69,6 +72,17 @@ def set_room_title_setting(title):
     def mutate(settings):
         settings.setdefault("appearance", {})["title"] = title
     update_settings(mutate)
+
+# appearance.faviconだけを部分更新する。faviconは空でなく長さ上限内であることを検証済みの前提
+def set_room_favicon_setting(favicon):
+    def mutate(settings):
+        settings.setdefault("appearance", {})["favicon"] = favicon
+    update_settings(mutate)
+
+# ブラウザのタブに出す絵文字。未設定/空なら既定の🏠
+def room_favicon():
+    favicon = load_settings().get("appearance", {}).get("favicon")
+    return favicon.strip() if isinstance(favicon, str) and favicon.strip() else DEFAULT_ROOM_FAVICON
 
 # 画面上部・ブラウザのタブに出すタイトル。未設定/空なら既定の「もくもく会」
 def room_title():

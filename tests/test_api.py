@@ -311,6 +311,17 @@ def test_room_title(client):
     settings.update_settings(lambda s: s["appearance"].pop("title"))
 
 
+def test_room_favicon(client):
+    assert client.get("/status").get_json()["favicon"] == "🏠"
+    assert admin_post(client, "/admin/room-favicon", favicon=" 🐱 ").status_code == 200
+    assert client.get("/status").get_json()["favicon"] == "🐱"
+    assert admin_post(client, "/admin/room-favicon", favicon="   ").status_code == 400
+    assert admin_post(client, "/admin/room-favicon", favicon="🐱 🐶").status_code == 400
+    assert admin_post(client, "/admin/room-favicon", favicon="🐱" * 17).status_code == 400
+    from mokumoku import settings
+    settings.update_settings(lambda s: s["appearance"].pop("favicon"))
+
+
 def test_room_passphrase(client):
     res = admin_post(client, "/admin/room-images")
     assert res.get_json()["passphrase"] == PASSPHRASE

@@ -3,12 +3,13 @@ import mimetypes
 import os
 import threading
 import time
+from urllib.parse import quote
 
 from flask import Flask, request
 
 from mokumoku.peers import peer_poll_loop
 from mokumoku.routes import images, npc, room, world
-from mokumoku.settings import DEFAULT_ROOM_TITLE, room_title
+from mokumoku.settings import DEFAULT_ROOM_FAVICON, DEFAULT_ROOM_TITLE, room_favicon, room_title
 
 # サーバーのOSタイムゾーン(EC2は既定でUTC)に関わらず、入退室記録をJST(クライアント側の時刻)と揃える
 os.environ["TZ"] = "Asia/Tokyo"
@@ -47,6 +48,9 @@ def index():
     title = html.escape(room_title())
     for tag in ("<title>{}</title>", '<span id="roomTitle">{}</span>'):
         page = page.replace(tag.format(DEFAULT_ROOM_TITLE), tag.format(title))
+    # ファビコンはdata URLのSVGに埋め込まれているので、SVGとしてエスケープしてからURLエンコードする
+    favicon = quote(html.escape(room_favicon()))
+    page = page.replace(f">{DEFAULT_ROOM_FAVICON}</text>", f">{favicon}</text>", 1)
     return page
 
 # waitress以外から起動された場合も巡回が回るよう、__main__ではなくモジュール読み込み時に開始する
