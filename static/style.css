@@ -827,8 +827,35 @@ body {
   font-size: 1.4rem;
   cursor: pointer;
 }
-/* 脚の分だけ下に余白を空けて、閉じるボタンと重ならないようにする */
-#charaStatusText .npc-tv { margin-bottom: 12px; }
+/* ステータスウィンドウでは部屋のブラウン管とは別に、細ベゼルの薄型ディスプレイにする。
+   脚は細い首(::after)と平たい台座(::before)。台座の分だけ下に余白を空けて閉じるボタンと重ならないようにする */
+#charaStatusText .npc-tv {
+  padding: 6px;
+  margin-bottom: 30px;
+  background: #0d0d0f;
+  border: 1px solid #3a3a40;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+#charaStatusText .npc-tv-screen { border: none; border-radius: 2px; }
+#charaStatusText .npc-tv-led { display: none; }
+#charaStatusText .npc-tv::after {
+  left: calc(50% - 18px);
+  width: 36px;
+  height: 20px;
+  background: linear-gradient(90deg, #6b6b73, #a3a3ab, #6b6b73);
+  border-radius: 0;
+}
+#charaStatusText .npc-tv::before {
+  content: "";
+  position: absolute;
+  top: calc(100% + 20px);
+  left: calc(50% - 90px);
+  width: 180px;
+  height: 5px;
+  background: linear-gradient(#a3a3ab, #6b6b73);
+  border-radius: 3px;
+}
 
 #charaStatusCloseBtn {
   display: block;
