@@ -205,8 +205,59 @@ function openCharaStatus(o, portrait, roomLabel, opts = {}) {
   }
   charaStatusText.innerHTML = "";
   kind.renderStatus(charaStatusText, o, roomLabel, opts);
+  setCharaStatusOffset(0, 0); // 開くたびに中央に戻す
   charaStatusOverlay.hidden = false;
 }
+
+// 名前プレートをつかんでのドラッグ移動。中央からのずれをtransformで持ち、
+// ウィンドウ(名前プレートと白枠の外側まで含む)が#roomViewからはみ出さない範囲に制限する
+const charaStatusNamePlate = document.getElementById("charaStatusNamePlate");
+let charaStatusOffset = { x: 0, y: 0 };
+let charaStatusDrag = null;
+
+function setCharaStatusOffset(x, y) {
+  charaStatusOffset = { x, y };
+  charaStatusWindow.style.transform = x || y ? `translate(${x}px, ${y}px)` : "";
+}
+
+charaStatusNamePlate.addEventListener("pointerdown", e => {
+  if (e.button !== 0) return;
+  const FRAME = 6; // box-shadowで描いている白の二重線ぶん
+  const win = charaStatusWindow.getBoundingClientRect();
+  const plate = charaStatusNamePlate.getBoundingClientRect();
+  const area = charaStatusOverlay.getBoundingClientRect();
+  const left = Math.min(win.left, plate.left) - FRAME - charaStatusOffset.x;
+  const right = Math.max(win.right, plate.right) + FRAME - charaStatusOffset.x;
+  const top = Math.min(win.top, plate.top) - FRAME - charaStatusOffset.y;
+  const bottom = Math.max(win.bottom, plate.bottom) + FRAME - charaStatusOffset.y;
+  charaStatusDrag = {
+    pointerId: e.pointerId,
+    grabX: e.clientX - charaStatusOffset.x,
+    grabY: e.clientY - charaStatusOffset.y,
+    minX: area.left - left, maxX: area.right - right,
+    minY: area.top - top, maxY: area.bottom - bottom,
+  };
+  charaStatusNamePlate.setPointerCapture(e.pointerId);
+  charaStatusWindow.classList.add("dragging");
+  e.preventDefault();
+});
+
+charaStatusNamePlate.addEventListener("pointermove", e => {
+  const d = charaStatusDrag;
+  if (!d || e.pointerId !== d.pointerId) return;
+  // ウィンドウが#roomViewより大きいとmin>maxになるが、そのときは左上側(max)に寄せる
+  const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+  setCharaStatusOffset(clamp(e.clientX - d.grabX, d.minX, d.maxX),
+                       clamp(e.clientY - d.grabY, d.minY, d.maxY));
+});
+
+function endCharaStatusDrag(e) {
+  if (!charaStatusDrag || e.pointerId !== charaStatusDrag.pointerId) return;
+  charaStatusDrag = null;
+  charaStatusWindow.classList.remove("dragging");
+}
+charaStatusNamePlate.addEventListener("pointerup", endCharaStatusDrag);
+charaStatusNamePlate.addEventListener("pointercancel", endCharaStatusDrag);
 
 function closeCharaStatus() {
   charaStatusOverlay.hidden = true;
@@ -216,10 +267,7 @@ function closeCharaStatus() {
 }
 
 charaStatusCloseBtn.addEventListener("click", closeCharaStatus);
-// 背景(ウィンドウの外側)クリックで閉じる。ウィンドウ内クリックはtargetがwindow配下になるので閉じない
-charaStatusOverlay.addEventListener("click", e => {
-  if (e.target === charaStatusOverlay) closeCharaStatus();
-});
+// 幕がなく外側のクリックは家の操作に使うので、閉じるのは「とじる」ボタンとEscだけ
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !charaStatusOverlay.hidden) closeCharaStatus();
 });

@@ -750,12 +750,13 @@ body {
 /* アバタークリックで開くステータスウィンドウ(ドラクエ風の紺色ウィンドウ)。
    画面全体ではなく#roomView(マップ側)の中央に出したいので、position:fixedではなく
    #roomView(position:relative)を基準にしたposition:absoluteで配置する。
-   トグルパネルと違いモーダルなので、既存最大z-index(5)より確実に上に出す */
+   開いたまま家を操作できるよう幕は出さず、オーバーレイ自体はクリックを素通しする
+   (ウィンドウだけpointer-eventsを戻す)。既存最大z-index(5)より確実に上に出す */
 #charaStatusOverlay {
   position: absolute;
   inset: 0;
   z-index: 50;
-  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -772,8 +773,10 @@ body {
   box-shadow: 0 0 0 3px #10186a, 0 0 0 6px #fff; /* 白の二重線ピクセル枠 */
   padding: 20px 16px 14px;
   font-size: 0.9rem;
+  pointer-events: auto;
 }
 
+/* 名前プレートをつかんでウィンドウをドラッグ移動できる(world.jsのドラッグ処理) */
 #charaStatusNamePlate {
   position: absolute;
   top: -14px;
@@ -783,7 +786,12 @@ body {
   box-shadow: 0 0 0 3px #10186a, 0 0 0 6px #fff;
   padding: 2px 16px;
   font-weight: bold;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
 }
+/* ドラッグ中にカーソルがYouTubeのiframeに乗るとイベントを取られるので、その間だけ無効にする */
+#charaStatusWindow.dragging iframe { pointer-events: none; }
 
 #charaStatusBody { display: flex; gap: 14px; margin-top: 6px; }
 #charaStatusText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
