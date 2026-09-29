@@ -1,3 +1,6 @@
+import os
+import time
+
 import pytest
 
 from conftest import ADMIN_PASSPHRASE, PASSPHRASE
@@ -320,6 +323,19 @@ def test_room_favicon(client):
     assert admin_post(client, "/admin/room-favicon", favicon="🐱" * 17).status_code == 400
     from mokumoku import settings
     settings.update_settings(lambda s: s["appearance"].pop("favicon"))
+
+
+def test_closing_at(client):
+    from mokumoku.settings import CLOSING_AT_FILE
+    assert client.get("/status").get_json()["closingAt"] is None
+    future = int(time.time()) + 3600
+    try:
+        for content, expected in ((f"{future}\n", future), (str(int(time.time()) - 60), None), ("8h", None)):
+            with open(CLOSING_AT_FILE, "w", encoding="utf-8") as f:
+                f.write(content)
+            assert client.get("/status").get_json()["closingAt"] == expected
+    finally:
+        os.remove(CLOSING_AT_FILE)
 
 
 def test_room_passphrase(client):

@@ -32,6 +32,7 @@ const recordText = document.getElementById("recordText");
 const copyBtn = document.getElementById("copyBtn");
 const closeRecordBtn = document.getElementById("closeRecordBtn");
 const discordStatusEl = document.getElementById("discordStatus");
+const closingTimeEl = document.getElementById("closingTime");
 const roomViewEl = document.getElementById("roomView");
 const worldMapEl = document.getElementById("worldMap");
 const backToMapBtn = document.getElementById("backToMapBtn");

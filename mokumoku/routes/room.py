@@ -10,7 +10,7 @@ from mokumoku import settings, state
 from mokumoku.auth import admin_label, check_passphrase, is_admin_passphrase, require_admin, seat_entry
 from mokumoku.media import decode_chara_image, decode_chat_image
 from mokumoku.notify import add_system_message, discord_status, post_to_discord
-from mokumoku.settings import PASSPHRASE_MAX_LEN, ROOM_FAVICON_MAX_LEN, ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, list_room_images, passphrase_file, read_secret_file, room_favicon, room_title, set_room_favicon_setting, set_room_image_setting, set_room_state_setting, set_room_title_setting, write_passphrase
+from mokumoku.settings import PASSPHRASE_MAX_LEN, ROOM_FAVICON_MAX_LEN, ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, closing_at, list_room_images, passphrase_file, read_secret_file, room_favicon, room_title, set_room_favicon_setting, set_room_image_setting, set_room_state_setting, set_room_title_setting, write_passphrase
 from mokumoku.state import _board_lock, board, bump_room_image_version, custom_images, message_images, messages, next_img_seq, pick_free_room, seat_tokens
 
 # 自分のルーム: チャット・入退室・管理者によるルームの見た目の操作
@@ -25,7 +25,7 @@ ROOM_STATE_LABELS = {"preparing": "準備中", "closed": "Closed"}  # システ�
 def get_status():
     discord = discord_status()
     room_state = settings.load_settings().get("appearance", {}).get("room_state", "normal")
-    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title(), "favicon": room_favicon()})
+    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title(), "favicon": room_favicon(), "closingAt": closing_at()})
 
 @bp.route("/messages", methods=["GET"])
 def get_messages():

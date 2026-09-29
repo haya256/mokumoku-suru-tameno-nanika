@@ -10,8 +10,9 @@ function renderStatus(status) {
   if (badge) {
     discordStatusEl.textContent = badge.label;
     discordStatusEl.title = badge.title;
-    discordStatusEl.className = status.discord;
+    discordStatusEl.className = `header-badge ${status.discord}`;
   }
+  renderClosingTime(status.closingAt);
   if (typeof status.roomImageVersion === "number") {
     scheduleRoomImageRefresh(status.roomImageVersion);
   }
@@ -27,6 +28,18 @@ function renderStatus(status) {
     roomState = status.roomState;
     renderWorld();
   }
+}
+
+// 閉店時刻(起動シェルがtimeoutで自動終了させる時刻、UNIX秒)。無ければ(null)バッジを隠す。
+// 今日でなければ(8hで日付をまたぐ場合など)日付も付ける
+function renderClosingTime(closingAt) {
+  closingTimeEl.hidden = typeof closingAt !== "number";
+  if (closingTimeEl.hidden) return;
+  const at = new Date(closingAt * 1000);
+  const hm = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const sameDay = at.toDateString() === new Date().toDateString();
+  closingTimeEl.textContent = `🕘 ${sameDay ? "" : `${at.getMonth() + 1}/${at.getDate()} `}${hm} 閉店`;
+  closingTimeEl.title = "この時刻にサーバーが自動で終了します";
 }
 
 // 部屋画像が変わったことをpoll(2秒間隔)で検知したら、全員が同時に1〜2MBの画像を

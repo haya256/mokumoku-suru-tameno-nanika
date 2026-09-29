@@ -3,10 +3,13 @@ import os
 import re
 import tempfile
 import threading
+import time
 
 SETTINGS_FILE = "config/settings.json"
 DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
 DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
+# 起動シェルがtimeoutで自動終了させるときに、終了時刻(UNIX秒)を書いておくファイル
+CLOSING_AT_FILE = "config/closing_at.txt"
 ROOM_IMAGE_DIR = "assets"
 ROOM_IMAGE_PATTERN = re.compile(r"^room-image-\d+\.webp$")
 DEFAULT_ROOM_TITLE = "もくもく会"
@@ -90,6 +93,16 @@ def room_title():
     return title.strip() if isinstance(title, str) and title.strip() else DEFAULT_ROOM_TITLE
 
 # ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
+# 閉店時刻(UNIX秒)。ファイルが無い・中身が壊れている・すでに過ぎている場合はNone。
+# 起動シェルが書くファイルなので、settingsと同じく毎回読み直す
+def closing_at():
+    try:
+        with open(CLOSING_AT_FILE, encoding="utf-8") as f:
+            value = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    return value if value > time.time() else None
+
 def read_secret_file(path):
     try:
         with open(path, encoding="utf-8") as f:

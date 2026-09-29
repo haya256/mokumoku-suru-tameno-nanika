@@ -1061,7 +1061,10 @@ header {
   align-items: center;
 }
 
-#discordStatus {
+.header-badges { display: flex; gap: 6px; }
+.header-badge[hidden] { display: none; }
+
+.header-badge {
   font-size: 0.75rem;
   font-weight: normal;
   padding: 3px 10px;
