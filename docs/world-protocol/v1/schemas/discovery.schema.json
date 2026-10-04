@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokumoco-world.example/v1/discovery.schema.json",
+  "title": "mokumoco-world Discovery 文書 (v1)",
+  "description": "GET /.well-known/mokumoco-world の応答。知らないフィールドは無視する前提なので additionalProperties は許可する",
+  "type": "object",
+  "required": ["protocol", "name", "versions"],
+  "properties": {
+    "protocol": { "const": "mokumoco-world" },
+    "name": { "type": "string" },
+    "versions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["version", "snapshot"],
+        "properties": {
+          "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+          "snapshot": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "minPollIntervalSec": { "type": "number", "minimum": 0 },
+    "software": { "type": "object" }
+  }
+}

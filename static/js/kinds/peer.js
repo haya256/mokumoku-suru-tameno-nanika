@@ -18,14 +18,16 @@ registerKind({
     label: "もくもくルーム", needsUrl: true, addLabel: "つなぐ", delLabel: "解除",
     confirm: "この接続を解除しますか？", urlHint: "相手ルームのURL (https://...)",
     nameHint: "表示名 (任意)", missingUrl: "相手ルームのURLを入力してください",
+    // 自動判別は、相手がワールド接続プロトコル(docs/world-protocol/)を話せばv1、だめなら旧方式でつなぐ。
     // fork型はelm200版(FastAPI+Redis)向けの読み替えアダプタを使う。向こうのRedis消費を抑えるため
     // 巡回間隔も別扱いになる(config/settings.jsonのworld.fork_poll_interval_sec)
-    typeOptions: [["native", "通常"], ["fork", "Redis版"]],
+    typeOptions: [["auto", "自動判別"], ["v1", "v1"], ["native", "旧方式"], ["fork", "Redis版"]],
     title: a => a.url || "",
-    text: a => a.type === "fork" ? `${a.name} (Redis版)` : a.name,
+    text: a => ({ fork: `${a.name} (Redis版)`, v1: `${a.name} (v1)` })[a.type] || a.name,
   },
 
   errors: {
     "already connected": "そのルームとは既につながっています",
+    "protocol not found": "相手がワールド接続プロトコル v1 に対応していません",
   },
 });

@@ -1,0 +1,49 @@
+{
+  "protocol": "mokumoco-world",
+  "version": "1.0",
+  "generatedAt": 1760000200.25,
+  "space": {
+    "type": "room9",
+    "title": "夜のもくもく会",
+    "favicon": "🌙",
+    "state": "normal",
+    "closingAt": 1760010000,
+    "image": { "url": "/room-image.webp", "version": "3", "mime": "image/webp" },
+    "occupants": [
+      {
+        "id": "c-8f3a", "name": "たろう", "task": "読書", "start": "19:30", "end": "21:00",
+        "cell": 4, "pose": 1,
+        "avatar": { "url": "/chara-custom/c-8f3a.png", "version": "12", "mime": "image/png" },
+        "npc": null
+      },
+      {
+        "id": "c-21bd", "name": "はなこ", "task": "資料づくり", "start": "19:45", "end": "",
+        "cell": 7, "pose": 0, "avatar": null, "npc": null
+      },
+      {
+        "id": "npc-1a2b3c4d", "name": "作業用BGM", "task": "", "start": "19:00", "end": "",
+        "cell": 2, "pose": 2, "avatar": null,
+        "npc": { "kind": "youtube", "props": { "videoId": "jfKfPfyJRdk" } }
+      },
+      {
+        "id": "npc-9f8e7d6c", "name": "時計", "task": "", "start": "19:00", "end": "",
+        "cell": 9, "pose": 0, "avatar": null,
+        "npc": { "kind": "clock" }
+      }
+    ]
+  },
+  "messages": [
+    {
+      "id": "sys-1760000100000", "ts": 1760000100.0, "author": null,
+      "text": "🟢 たろう がルーム4に入室してもくもく開始(19:30〜21:00): 読書", "image": null, "system": true
+    },
+    {
+      "id": "m-x81k", "ts": 1760000123.5, "author": { "name": "たろう", "uid": "c-8f3a" },
+      "text": "こんばんは", "image": null, "system": false
+    },
+    {
+      "id": "m-p02z", "ts": 1760000150.0, "author": { "name": "はなこ", "uid": "c-21bd" },
+      "text": "", "image": { "url": "/message-image/Qw3rTy.webp", "mime": "image/webp" }, "system": false
+    }
+  ]
+}

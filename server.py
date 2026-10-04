@@ -8,7 +8,7 @@ from urllib.parse import quote
 from flask import Flask, request
 
 from mokumoku.peers import peer_poll_loop
-from mokumoku.routes import images, npc, room, world
+from mokumoku.routes import images, npc, protocol, room, world
 from mokumoku.settings import DEFAULT_ROOM_FAVICON, DEFAULT_ROOM_TITLE, room_favicon, room_title
 
 # サーバーのOSタイムゾーン(EC2は既定でUTC)に関わらず、入退室記録をJST(クライアント側の時刻)と揃える
@@ -24,7 +24,7 @@ mimetypes.add_type("image/webp", ".webp")
 app = Flask(__name__)
 # チャット画像(WebP)をJSONボディに積むため、アバターのみだった頃の2MBから拡大
 app.config["MAX_CONTENT_LENGTH"] = 6 * 1024 * 1024
-for module in (room, world, npc, images):
+for module in (room, world, npc, images, protocol):
     app.register_blueprint(module.bp)
 
 # ブラウザが2秒ごとに取り直すpoll先。本体からETagを作り、前回と変わっていなければ

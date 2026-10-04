@@ -4,10 +4,10 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from mokumoku import net
+from mokumoku import net, protocol_v1
 from mokumoku.areas import MAX_AREAS, load_areas
 from mokumoku.kinds import AREA_KINDS
-from mokumoku.media import PNG_MAGIC, is_webp
+from mokumoku.media import PNG_MAGIC, is_webp, sniff_image_mime
 from mokumoku.settings import load_settings
 from mokumoku.state import area_images, peer_message_images
 
@@ -27,8 +27,9 @@ PEER_IMAGE_MAX_AGE = 300 # 部屋画像を取り直すまでの最長時間(秒)
 FORK_POLL_INTERVAL_DEFAULT = 60
 FORK_SSE_MAX = 2_000_000  # SSEの最初の1イベントを読む際の上限バイト数(以降は読まず切断する)
 
+# v1型のピアは media(中継してよい画像URLの一覧)と roomImage({"url","version"}|None)も持つ
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
-peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str}
+peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str, "mime": str}
 peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(fork型のみ使う)
 
 # fork型ピアの巡回間隔(秒)。settings.jsonのworld.fork_poll_interval_secで管理者が調整できる
@@ -39,6 +40,15 @@ def fork_poll_interval():
     except (TypeError, ValueError):
         val = FORK_POLL_INTERVAL_DEFAULT
     return max(val, PEER_POLL_INTERVAL)
+
+# ピアごとの巡回間隔(秒)。どれもPEER_POLL_INTERVALより短くはしない
+def peer_poll_interval(peer):
+    if peer.get("type") == "fork":
+        return fork_poll_interval()
+    if peer.get("type") == "v1":
+        min_poll = peer.get("minPoll")
+        return max(min_poll if isinstance(min_poll, (int, float)) else 0, PEER_POLL_INTERVAL)
+    return PEER_POLL_INTERVAL
 
 # fork型ピア(elm200版)向け。GET /api/events はSSEで、接続直後に現在の全状態を
 # `data: {...}\n\n` で1回配信してから待機ループに入る仕様(2026-09-13時点で確認)。
@@ -62,8 +72,18 @@ def fetch_fork_snapshot(url):
 # 相手の部屋から人が消えたように見えるのを避ける(クライアント側はグレーアウト表示にする)
 def refresh_peer(peer):
     pid, url, peer_type = peer["id"], peer["url"], peer.get("type", "native")
+    extra = {}
     try:
-        if peer_type == "fork":
+        if peer_type == "v1":
+            # ワールド接続プロトコル v1(docs/world-protocol/)。スナップショット1回で全部取れる
+            snapshot_url = peer.get("snapshot")
+            if not snapshot_url:
+                raise ValueError("snapshot url missing")
+            norm = protocol_v1.normalize_snapshot(url, snapshot_url, net.fetch_json(snapshot_url))
+            board, msgs = norm["board"], norm["messages"]
+            version = norm["roomImage"]["version"] if norm["roomImage"] else ""
+            extra = {"media": norm["media"], "roomImage": norm["roomImage"]}
+        elif peer_type == "fork":
             snapshot = fetch_fork_snapshot(url)
             board, msgs, config = snapshot.get("board"), snapshot.get("messages"), snapshot.get("config")
             if not isinstance(board, list) or not isinstance(msgs, list) or not isinstance(config, dict):
@@ -79,24 +99,33 @@ def refresh_peer(peer):
                 raise ValueError("unexpected payload")
             version = status.get("roomImageVersion")
         peer_cache[pid] = {"board": board, "messages": msgs,
-                           "roomImageVersion": version if isinstance(version, (int, str)) else 0, "ok": True}
+                           "roomImageVersion": version if isinstance(version, (int, str)) else 0, "ok": True, **extra}
     except Exception as e:
         peer_cache[pid] = {**peer_cache.get(pid, {}), "ok": False}
         print(f"[peers] {peer.get('name') or url}: {e}")
         return
     # 画像の取得失敗でピア全体をオフライン扱いにはしない(在室者やチャットは取れているため)
     try:
-        refresh_peer_image(pid, url, peer_type, version)
+        refresh_peer_image(pid, url, peer_type, version, extra.get("roomImage"))
     except Exception as e:
         print(f"[peers] {peer.get('name') or url} の部屋画像: {e}")
 
 # 部屋画像は相手のバージョンが変わったときだけ取り直す(毎回取ると数百KBが巡回のたびに流れる)。
 # ただし相手が再起動するとバージョンは0に戻りうるので、それだけに頼らず一定時間で取り直す
-def refresh_peer_image(pid, url, peer_type, version):
+def refresh_peer_image(pid, url, peer_type, version, room_image=None):
     cached = area_images.get(pid)
     if cached and cached["version"] == version and time.time() - cached["at"] < PEER_IMAGE_MAX_AGE:
         return
-    if peer_type == "fork":
+    if peer_type == "v1":
+        # 絵の無い空間もある(spec §4)。URLは normalize_snapshot が同じオリジンに限っている
+        if not room_image:
+            area_images.pop(pid, None)
+            return
+        data = net.fetch_bytes(room_image["url"], PEER_IMAGE_MAX)
+        mime = sniff_image_mime(data)
+        if not mime:
+            raise ValueError("not an image")
+    elif peer_type == "fork":
         # forkは部屋画像を public/assets/ 配下から静的配信している(PNG)。versionはそのファイル名
         if not version or not re.fullmatch(r"[\w.-]+", version):
             raise ValueError("invalid room image filename")
@@ -144,14 +173,15 @@ def poll_peers_once():
         if image:
             area_images[a["id"]] = {**image, "at": time.time()}
     # fork型ピアはRedisバックエンドでアクセス1回のコストが高いため、ネイティブ型と同じ5秒間隔では
-    # 巡回しない。設定された間隔が経過したものだけを対象に加える
-    interval = fork_poll_interval()
+    # 巡回しない。設定された間隔が経過したものだけを対象に加える。
+    # v1型ピアは相手がDiscoveryで希望した間隔(minPollIntervalSec)を守る
     now = time.time()
     targets = []
     for p in peers:
         if not (p.get("id") and p.get("url")):
             continue
-        if p.get("type") == "fork":
+        interval = peer_poll_interval(p)
+        if interval > PEER_POLL_INTERVAL:
             if now - peer_last_polled.get(p["id"], 0) < interval:
                 continue
             peer_last_polled[p["id"]] = now

@@ -1,5 +1,6 @@
 import json as _json
 import os
+import secrets
 import time
 import urllib.request
 from datetime import datetime
@@ -35,9 +36,10 @@ def post_to_discord(content):
         print(f"[Discord] error: {e}")
 
 # tsは自分のチャットとピアのチャットを1本の時系列にマージするための並び替えキー。
-# 表示は従来どおりtimeを使う
+# 表示は従来どおりtimeを使う。idはワールド接続プロトコルで発言を識別するため(spec §5)
 def add_system_message(text):
     messages.append({
+        "id": secrets.token_urlsafe(8),
         "name": "",
         "text": text,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M"),

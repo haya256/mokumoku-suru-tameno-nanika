@@ -7,6 +7,7 @@
     areas.py     ワールドマップのエリア(設定ファイルに保存)
     peers.py     他のもくもくルーム(ピア)の巡回と中継キャッシュ
     kinds/       エリア/NPCの種別ごとの定義(新しい種別はここに1ファイル足す)
-    routes/      URLごとの処理(room / world / npc / images)
+    protocol_v1.py  ワールド接続プロトコル v1 の組み立て(仕様は docs/world-protocol/)
+    routes/      URLごとの処理(room / world / npc / images / protocol)
     net.py, media.py  外部取得と画像検証の小さな道具
 """

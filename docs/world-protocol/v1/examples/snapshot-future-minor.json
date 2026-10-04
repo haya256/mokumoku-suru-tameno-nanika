@@ -1,0 +1,21 @@
+{
+  "_comment": "将来の 1.4 の提供側が返しうる例。1.0 の接続側は、知らないフィールド(mood, reactions, weather など)と知らない state 値を無視して読めなければならない",
+  "protocol": "mokumoco-world",
+  "version": "1.4",
+  "generatedAt": 1760000000,
+  "weather": "rain",
+  "space": {
+    "type": "room9",
+    "title": "未来のもくもく会",
+    "state": "break",
+    "occupants": [
+      {
+        "id": "c-1", "name": "みらい", "cell": 1, "mood": "focused",
+        "npc": { "kind": "robot", "props": { "model": "x" } }
+      }
+    ]
+  },
+  "messages": [
+    { "id": "m-1", "ts": 1760000000, "author": { "name": "みらい", "uid": "c-1" }, "text": "やあ", "reactions": ["👍"] }
+  ]
+}

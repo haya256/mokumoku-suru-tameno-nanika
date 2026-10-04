@@ -1,0 +1,9 @@
+{
+  "protocol": "mokumoco-world",
+  "name": "夜のもくもく会",
+  "versions": [
+    { "version": "1.0", "snapshot": "/world-api/v1/snapshot" }
+  ],
+  "minPollIntervalSec": 5,
+  "software": { "name": "mokumoku-suru-tameno-nanika" }
+}

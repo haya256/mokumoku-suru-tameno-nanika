@@ -11,6 +11,16 @@ MAX_CHAT_IMAGE_B64 = 4_000_000  # チャット画像はアバターより大き�
 def is_webp(data):
     return data[:4] == WEBP_MAGIC_HEAD and data[8:12] == WEBP_MAGIC_TAIL
 
+# 中身の先頭から画像の形式を判定する(PNG/WebP/JPEGのみ)。申告されたmimeは信用せずこちらで決める
+def sniff_image_mime(data):
+    if data.startswith(PNG_MAGIC):
+        return "image/png"
+    if is_webp(data):
+        return "image/webp"
+    if data.startswith(JPEG_MAGIC):
+        return "image/jpeg"
+    return None
+
 # クライアントがcanvasで縮小・PNG化したデータURLを検証してPNGバイト列を返す。不正ならNone
 def decode_chara_image(image):
     prefix = "data:image/png;base64,"

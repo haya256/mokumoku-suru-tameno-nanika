@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mokumoco-world.example/v1/snapshot.schema.json",
+  "title": "mokumoco-world スナップショット (v1)",
+  "description": "spec.md §3〜§6。知らないフィールド・空間種別を無視する前提なので additionalProperties は許可し、space は既知の type のときだけ中身を検証する",
+  "type": "object",
+  "required": ["protocol", "version", "generatedAt", "space", "messages"],
+  "properties": {
+    "protocol": { "const": "mokumoco-world" },
+    "version": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+    "generatedAt": { "type": "number" },
+    "space": { "$ref": "#/$defs/space" },
+    "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } }
+  },
+  "$defs": {
+    "imageRef": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "mime": { "enum": ["image/png", "image/webp", "image/jpeg"] }
+      }
+    },
+    "imageRefOrNull": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/imageRef" }]
+    },
+    "space": {
+      "type": "object",
+      "required": ["type", "title"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "image": { "$ref": "#/$defs/imageRefOrNull" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "room9" } } },
+          "then": { "$ref": "#/$defs/room9" }
+        },
+        {
+          "if": { "properties": { "type": { "const": "stream" } } },
+          "then": { "$ref": "#/$defs/stream" }
+        }
+      ]
+    },
+    "room9": {
+      "type": "object",
+      "required": ["occupants"],
+      "properties": {
+        "favicon": { "type": "string" },
+        "state": { "type": "string" },
+        "closingAt": { "type": ["number", "null"] },
+        "occupants": {
+          "type": "array",
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/occupant" }
+        }
+      }
+    },
+    "occupant": {
+      "type": "object",
+      "required": ["id", "name", "cell"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "name": { "type": "string" },
+        "task": { "type": "string" },
+        "start": { "type": "string" },
+        "end": { "type": "string" },
+        "cell": { "type": "integer", "minimum": 1, "maximum": 9 },
+        "pose": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "avatar": { "$ref": "#/$defs/imageRefOrNull" },
+        "npc": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "type": "string", "minLength": 1 },
+                "props": { "type": "object" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "stream": {
+      "type": "object",
+      "required": ["media"],
+      "properties": {
+        "live": { "type": "boolean" },
+        "media": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "format", "url"],
+            "properties": {
+              "kind": { "enum": ["video", "audio"] },
+              "format": { "type": "string" },
+              "url": { "type": "string", "pattern": "^https://" }
+            }
+          }
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "required": ["id", "ts", "text"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "ts": { "type": "number" },
+        "author": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" },
+                "uid": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        },
+        "text": { "type": "string" },
+        "image": { "$ref": "#/$defs/imageRefOrNull" },
+        "system": { "type": "boolean" }
+      }
+    }
+  }
+}

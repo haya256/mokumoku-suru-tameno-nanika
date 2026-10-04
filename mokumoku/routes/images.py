@@ -5,8 +5,8 @@ from flask import Blueprint, Response, jsonify, request, send_from_directory
 
 from mokumoku import net
 from mokumoku.areas import find_area, find_peer
-from mokumoku.media import PNG_MAGIC, is_webp
-from mokumoku.peers import PEER_IMAGE_MAX, peer_chara_images
+from mokumoku.media import PNG_MAGIC, is_webp, sniff_image_mime
+from mokumoku.peers import PEER_IMAGE_MAX, peer_cache, peer_chara_images
 from mokumoku.settings import ROOM_IMAGE_DIR, list_room_images, load_settings
 from mokumoku.state import area_images, board, custom_images, message_images, npc_images, peer_message_images
 
@@ -79,8 +79,14 @@ def npc_image(npc_id):
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
+# v1型ピアの画像は、直近のスナップショットに載っていたURLだけを取りに行く(任意URLのプロキシにしない)。
+# スナップショットに無ければNone
+def v1_media_url(peer_id, key):
+    return peer_cache.get(peer_id, {}).get("media", {}).get(key)
+
 # ピア参加者のカスタムキャラ画像を中継。人数分あって大半は使われないので巡回時には先読みせず、
-# 要求された時点で取りに行って (peer_id, cid) 単位でキャッシュする
+# 要求された時点で取りに行って (peer_id, cid) 単位でキャッシュする。
+# パスの .png は旧来の形のまま。v1型ピアはPNG以外も来るので、mimeは中身から決める
 @bp.route("/peer-chara/<peer_id>/<cid>.png")
 def peer_chara(peer_id, cid):
     peer = find_peer(peer_id)
@@ -90,22 +96,30 @@ def peer_chara(peer_id, cid):
     cached = peer_chara_images.get((peer_id, cid))
     if not cached or cached["version"] != version:
         quoted_cid = urllib.parse.quote(cid, safe="")
-        chara_url = (f"{peer['url']}/api/chara-custom?id={quoted_cid}" if peer.get("type") == "fork"
-                     else f"{peer['url']}/chara-custom/{quoted_cid}.png")
+        if peer.get("type") == "v1":
+            chara_url = v1_media_url(peer_id, ("chara", cid))
+            if not chara_url:
+                return jsonify({"error": "not found"}), 404
+        elif peer.get("type") == "fork":
+            chara_url = f"{peer['url']}/api/chara-custom?id={quoted_cid}"
+        else:
+            chara_url = f"{peer['url']}/chara-custom/{quoted_cid}.png"
         try:
             data = net.fetch_bytes(chara_url, PEER_IMAGE_MAX)
         except Exception:
             return jsonify({"error": "unavailable"}), 502
         # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
-        if not data.startswith(PNG_MAGIC):
+        mime = sniff_image_mime(data) if peer.get("type") == "v1" else ("image/png" if data.startswith(PNG_MAGIC) else None)
+        if not mime:
             return jsonify({"error": "unavailable"}), 502
-        cached = {"data": data, "version": version}
+        cached = {"data": data, "version": version, "mime": mime}
         peer_chara_images[(peer_id, cid)] = cached
-    return Response(cached["data"], mimetype="image/png",
+    return Response(cached["data"], mimetype=cached["mime"],
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 
-# ピア参加者のチャット画像を中継。fork型ピアはメッセージのスキーマが異なり画像URLを持たないため対象外
+# ピア参加者のチャット画像を中継。fork型ピアはメッセージのスキーマが異なり画像URLを持たないため対象外。
+# v1型ピアでは image_id は発言idで、パスの .webp は旧来の形のまま(mimeは中身から決める)
 @bp.route("/peer-message-image/<peer_id>/<image_id>.webp")
 def peer_message_image(peer_id, image_id):
     peer = find_peer(peer_id)
@@ -114,16 +128,22 @@ def peer_message_image(peer_id, image_id):
     key = (peer_id, image_id)
     cached = peer_message_images.get(key)
     if not cached:
-        quoted_id = urllib.parse.quote(image_id, safe="")
+        if peer.get("type") == "v1":
+            image_url = v1_media_url(peer_id, ("message", image_id))
+            if not image_url:
+                return jsonify({"error": "not found"}), 404
+        else:
+            image_url = f"{peer['url']}/message-image/{urllib.parse.quote(image_id, safe='')}.webp"
         try:
-            data = net.fetch_bytes(f"{peer['url']}/message-image/{quoted_id}.webp", PEER_IMAGE_MAX)
+            data = net.fetch_bytes(image_url, PEER_IMAGE_MAX)
         except Exception:
             return jsonify({"error": "unavailable"}), 502
         # 中継するバイト列が本当に画像かは相手任せにせずこちらでも確かめる
-        if not is_webp(data):
+        mime = sniff_image_mime(data) if peer.get("type") == "v1" else ("image/webp" if is_webp(data) else None)
+        if not mime:
             return jsonify({"error": "unavailable"}), 502
-        cached = data
+        cached = {"data": data, "mime": mime}
         peer_message_images[key] = cached
-    return Response(cached, mimetype="image/webp",
+    return Response(cached["data"], mimetype=cached["mime"],
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})

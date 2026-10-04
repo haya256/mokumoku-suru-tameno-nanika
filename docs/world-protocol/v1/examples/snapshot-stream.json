@@ -1,0 +1,18 @@
+{
+  "protocol": "mokumoco-world",
+  "version": "1.0",
+  "generatedAt": 1760000000,
+  "space": {
+    "type": "stream",
+    "title": "作業BGM配信",
+    "image": { "url": "/thumbnail.jpg", "version": "1", "mime": "image/jpeg" },
+    "live": true,
+    "media": [
+      { "kind": "video", "format": "hls", "url": "https://cdn.example.com/live/index.m3u8" },
+      { "kind": "audio", "format": "hls", "url": "https://cdn.example.com/live/audio.m3u8" }
+    ]
+  },
+  "messages": [
+    { "id": "m-1", "ts": 1759999990, "author": { "name": "配信者", "uid": null }, "text": "配信はじめました" }
+  ]
+}

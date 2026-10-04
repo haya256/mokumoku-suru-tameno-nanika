@@ -1,0 +1,13 @@
+{
+  "_comment": "知らない空間種別の例。接続側は title と image だけでマスを表示しなければならない",
+  "protocol": "mokumoco-world",
+  "version": "1.2",
+  "generatedAt": 1760000000,
+  "space": {
+    "type": "whiteboard",
+    "title": "みんなのホワイトボード",
+    "image": { "url": "/board.png", "version": "88", "mime": "image/png" },
+    "strokes": [[0, 0, 10, 10]]
+  },
+  "messages": []
+}

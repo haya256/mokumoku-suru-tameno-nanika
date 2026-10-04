@@ -11,7 +11,7 @@ npc_images = {}  # npc board id -> {"data": bytes, "mime": str, "version": str} 
 # チャットに添付された画像。messagesと同じく無制限に増え続け、再起動で消える(既存の割り切りに合わせる)
 message_images = {}  # image id -> bytes
 # 他サーバーのチャット画像を中継した際のキャッシュ。peer_chara_imagesと同じ役割
-peer_message_images = {}  # (peer_id, image_id) -> bytes
+peer_message_images = {}  # (peer_id, image_id) -> {"data": bytes, "mime": str}
 # エリアのマス絵(ピアの部屋画像やYouTubeのサムネ)。巡回スレッドと設置時の両方が書き込む
 area_images = {}        # area_id -> {"data": bytes, "mime": str, "version": int|str|None, "at": float}
 _img_seq = 0  # キャッシュバスター用の通し番号。退室しても巻き戻さない(再入室時のキャッシュ誤爆防止)
