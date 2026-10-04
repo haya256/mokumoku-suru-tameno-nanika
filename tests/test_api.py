@@ -51,6 +51,15 @@ def test_join_and_leave(client):
     assert any("入室" in t for t in texts) and any("退室" in t for t in texts)
 
 
+# 画像が不正で断ったときに、部屋の仮予約が残って部屋をふさがないこと
+def test_join_with_invalid_image_leaves_no_reservation(client):
+    res = client.post("/board/join", json={"id": "u1", "name": "たろう", "task": "読書",
+                                           "passphrase": PASSPHRASE, "image": "data:image/png;base64,AAAA"})
+    assert res.status_code == 400
+    assert client.get("/board").get_json() == []
+    assert join(client).status_code == 201
+
+
 def test_join_requires_passphrase(client):
     assert join(client, passphrase="ちがう").status_code == 401
     assert join(client, passphrase=ADMIN_PASSPHRASE).status_code == 201

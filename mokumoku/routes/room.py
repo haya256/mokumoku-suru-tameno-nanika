@@ -91,6 +91,13 @@ def join_board():
         return jsonify({"error": "id, name and task required"}), 400
     start = (data.get("start") or "").strip() or datetime.now().strftime("%H:%M")
     end = (data.get("end") or "").strip()
+    # 画像は任意。部屋を仮予約する前に検証する(後で断ると、名前のない仮予約が部屋をふさいだまま残る)
+    image = data.get("image")
+    raw = None
+    if image:
+        raw = decode_chara_image(image)
+        if raw is None:
+            return jsonify({"error": "invalid image"}), 400
     is_new = cid not in board
     if is_new:
         with _board_lock:
@@ -107,12 +114,8 @@ def join_board():
         old_name = board[cid]["name"]
         if old_name != name:
             add_system_message(f"✏️ {old_name} が {name} に名前を変更")
-    # 画像は任意。未送信なら既存のカスタム画像を維持(imgvはcustom_imagesから再計算)
-    image = data.get("image")
-    if image:
-        raw = decode_chara_image(image)
-        if raw is None:
-            return jsonify({"error": "invalid image"}), 400
+    # 未送信なら既存のカスタム画像を維持(imgvはcustom_imagesから再計算)
+    if raw is not None:
         custom_images[cid] = {"data": raw, "v": next_img_seq()}
     imgv = custom_images.get(cid, {}).get("v", 0)
     board[cid] = {"id": cid, "name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose, "imgv": imgv}
