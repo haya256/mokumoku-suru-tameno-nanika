@@ -203,10 +203,14 @@ def peer_poll_loop():
 # /world でピアのマスに載せる、巡回スレッドが貯めた相手の状態
 def peer_public_state(peer_id):
     cached = peer_cache.get(peer_id, {})
+    image = area_images.get(peer_id)
     return {
         # 未取得はnull(「接続中」表示)、Falseは「接続できません」表示
         "ok": cached.get("ok"),
         "board": cached.get("board", []),
         "messages": cached.get("messages", []),
-        "roomImageVersion": cached.get("roomImageVersion", 0),
+        # 画面は版をURLに入れて /area-image を1日キャッシュする。巡回でつかんだ相手の版をそのまま出すと、
+        # 画像を取り終える前に新しい版のURLで古い画像が返り、それがキャッシュに残る。
+        # なので実際に手元にある画像の版を出す
+        "roomImageVersion": image["version"] if image else cached.get("roomImageVersion", 0),
     }

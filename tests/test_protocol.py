@@ -264,3 +264,12 @@ def test_v1_poll_interval_respects_min_poll():
     assert peers.peer_poll_interval({"type": "v1", "minPoll": 30}) == 30
     assert peers.peer_poll_interval({"type": "v1", "minPoll": 1}) == peers.PEER_POLL_INTERVAL
     assert peers.peer_poll_interval({"type": "native"}) == peers.PEER_POLL_INTERVAL
+
+
+# 画像を取り終える前に新しい版を画面に出すと、新しい版のURLで古い画像がキャッシュされてしまう
+def test_peer_image_version_follows_fetched_image(monkeypatch):
+    monkeypatch.setitem(peers.peer_cache, "p1", {"ok": True, "roomImageVersion": "new"})
+    monkeypatch.setitem(state.area_images, "p1", {"data": b"", "mime": "image/png", "version": "old", "at": 0})
+    assert peers.peer_public_state("p1")["roomImageVersion"] == "old"
+    state.area_images["p1"]["version"] = "new"
+    assert peers.peer_public_state("p1")["roomImageVersion"] == "new"
