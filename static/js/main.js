@@ -38,7 +38,7 @@ function renderClosingTime(closingAt) {
   const at = new Date(closingAt * 1000);
   const hm = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
   const sameDay = at.toDateString() === new Date().toDateString();
-  closingTimeEl.textContent = `🕘 ${sameDay ? "" : `${at.getMonth() + 1}/${at.getDate()} `}${hm} 閉店`;
+  closingTimeEl.textContent = `🕘 サーバー自動停止時刻 ${sameDay ? "" : `${at.getMonth() + 1}/${at.getDate()} `}${hm}`;
   closingTimeEl.title = "この時刻にサーバーが自動で終了します";
 }
 
