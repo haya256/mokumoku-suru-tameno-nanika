@@ -24,7 +24,7 @@ def normalize_peer_url(url):
 class PeerKind(Kind):
     key = "peer"
     emoji = "🌏"
-    label = "もくもくルーム"
+    label = "もクもコ互換ワールド"
     places = ("area",)
 
     def prepare(self, data):

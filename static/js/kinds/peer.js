@@ -15,7 +15,7 @@ registerKind({
   },
 
   area: {
-    label: "もくもくルーム", needsUrl: true, addLabel: "つなぐ", delLabel: "解除",
+    label: "もクもコ互換ワールド", needsUrl: true, addLabel: "つなぐ", delLabel: "解除",
     confirm: "この接続を解除しますか？", urlHint: "相手ルームのURL (https://...)",
     nameHint: "表示名 (任意)", missingUrl: "相手ルームのURLを入力してください",
     // 自動判別は、相手がワールド接続プロトコル(docs/world-protocol/)を話せばv1、だめなら旧方式でつなぐ。
