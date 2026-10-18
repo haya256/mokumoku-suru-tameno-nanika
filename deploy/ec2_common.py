@@ -9,6 +9,7 @@ import boto3
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_FILE = os.path.join(REPO_ROOT, "config", "settings.json")
 PASSPHRASE_FILE = os.path.join(REPO_ROOT, "config", "合言葉.txt")
+ADMIN_PASSPHRASE_FILE = os.path.join(REPO_ROOT, "config", "管理者合言葉.txt")
 STATE_FILE = os.path.join(REPO_ROOT, "deploy", ".current_instance")
 USER_DATA_TEMPLATE = os.path.join(REPO_ROOT, "deploy", "user_data.sh")
 
@@ -37,22 +38,28 @@ def load_deploy_config():
     deploy.setdefault("auto_terminate_hours", 6)
     return deploy
 
-def load_secrets():
+def read_optional(path):
     try:
-        with open(PASSPHRASE_FILE, encoding="utf-8") as f:
-            passphrase_text = f.read()
+        with open(path, encoding="utf-8") as f:
+            return f.read()
     except OSError:
-        passphrase_text = ""
+        return ""
+
+def load_secrets():
+    passphrase_text = read_optional(PASSPHRASE_FILE)
+    admin_passphrase_text = read_optional(ADMIN_PASSPHRASE_FILE)
     with open(CONFIG_FILE, encoding="utf-8") as f:
         settings_json_text = f.read()
     discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
-    return passphrase_text, settings_json_text, discord_webhook_url
+    return passphrase_text, admin_passphrase_text, settings_json_text, discord_webhook_url
 
-def render_user_data(passphrase_text, settings_json_text, discord_webhook_url, auto_terminate_hours):
+def render_user_data(passphrase_text, admin_passphrase_text, settings_json_text, discord_webhook_url,
+                     auto_terminate_hours):
     with open(USER_DATA_TEMPLATE, encoding="utf-8") as f:
         template = string.Template(f.read())
     return template.substitute(
         PASSPHRASE_B64=base64.b64encode(passphrase_text.encode()).decode(),
+        ADMIN_PASSPHRASE_B64=base64.b64encode(admin_passphrase_text.encode()).decode(),
         SETTINGS_JSON_B64=base64.b64encode(settings_json_text.encode()).decode(),
         DISCORD_WEBHOOK_URL=discord_webhook_url,
         AUTO_TERMINATE_MINUTES=str(int(auto_terminate_hours * 60)),

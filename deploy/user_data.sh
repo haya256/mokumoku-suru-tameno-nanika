@@ -13,6 +13,7 @@ venv/bin/pip install -r requirements.txt
 
 mkdir -p config
 echo '${PASSPHRASE_B64}' | base64 -d > config/合言葉.txt
+echo '${ADMIN_PASSPHRASE_B64}' | base64 -d > config/管理者合言葉.txt
 echo '${SETTINGS_JSON_B64}' | base64 -d > config/settings.json
 
 export DISCORD_WEBHOOK_URL='${DISCORD_WEBHOOK_URL}'

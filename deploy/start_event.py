@@ -57,9 +57,9 @@ def fetch_tunnel_url(ssm, instance_id, timeout=SSM_WAIT_TIMEOUT_SEC):
 
 def main():
     deploy = ec2_common.load_deploy_config()
-    passphrase_text, settings_json_text, discord_webhook_url = ec2_common.load_secrets()
+    passphrase_text, admin_passphrase_text, settings_json_text, discord_webhook_url = ec2_common.load_secrets()
     user_data = ec2_common.render_user_data(
-        passphrase_text, settings_json_text, discord_webhook_url,
+        passphrase_text, admin_passphrase_text, settings_json_text, discord_webhook_url,
         deploy["auto_terminate_hours"],
     )
 
