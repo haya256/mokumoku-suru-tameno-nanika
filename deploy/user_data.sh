@@ -4,6 +4,9 @@ exec > /var/log/mokumoku_userdata.log 2>&1
 
 apt-get update
 apt-get install -y python3-pip python3-venv git
+# AMI固定でupgradeしないため、Brotliの脆弱性(CVE-2026-111497)対策としてlibbrotli1だけは起動時に最新化する
+apt-get install -y --only-upgrade libbrotli1
+dpkg -l libbrotli1 | tail -n1
 
 git clone --branch main --depth 1 https://github.com/haya256/mokumoku-suru-tameno-nanika.git /opt/mokumoku
 cd /opt/mokumoku
