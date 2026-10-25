@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <!-- スマホで部屋を上部に小さく固定している間、元の部屋の場所を取っておく(下の内容が詰まらないように) -->
+  <div id="roomViewSpacer" hidden></div>
   <div id="roomView">
     <div id="worldMap"></div>
     <button type="button" id="backToMapBtn" hidden>← マップへ</button>
@@ -30,6 +32,8 @@
       </div>
     </div>
   </div>
+  <!-- 部屋の下端の目印。これが画面の上に出ていったら部屋を小さく固定する -->
+  <div id="roomViewSentinel"></div>
   <div id="main">
   <header><span id="roomTitle">もくもく会</span> <span class="header-badges"><span id="closingTime" class="header-badge" hidden></span><span id="discordStatus" class="header-badge"></span></span></header>
   <div id="board">

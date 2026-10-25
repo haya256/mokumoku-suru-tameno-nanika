@@ -390,3 +390,28 @@ backToMapBtn.addEventListener("click", () => {
   focusedKey = null;
   renderWorld();
 });
+
+// 狭い画面ではページ全体がスクロールし、チャットを読むと部屋が上に流れて見えなくなる。
+// 部屋の下端の目印が画面の上に出たら、部屋を上部に小さく固定する(中身は動かさずCSSだけなので再生も途切れない)
+const roomViewSpacerEl = document.getElementById("roomViewSpacer");
+const narrowScreen = window.matchMedia("(max-width: 800px)");
+
+function setRoomDocked(docked) {
+  roomViewEl.classList.toggle("docked", docked);
+  document.body.classList.toggle("room-docked", docked);
+  roomViewSpacerEl.hidden = !docked;
+}
+
+new IntersectionObserver(([entry]) => {
+  setRoomDocked(narrowScreen.matches && !entry.isIntersecting && entry.boundingClientRect.top < 0);
+}).observe(document.getElementById("roomViewSentinel"));
+
+narrowScreen.addEventListener("change", () => { if (!narrowScreen.matches) setRoomDocked(false); });
+
+// 小さいあいだは中のマスやキャラには届けず、先頭に戻して元の大きさで見せる
+roomViewEl.addEventListener("click", e => {
+  if (!roomViewEl.classList.contains("docked")) return;
+  e.preventDefault();
+  e.stopPropagation();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}, true);

@@ -1048,6 +1048,36 @@ body {
     height: auto;
     flex: 1;
   }
+
+  /* スクロールで部屋が画面の外に出たら、上端の帯の真ん中に小さく固定する。
+     小さいあいだは中身を押せず、タップすると先頭に戻る(world.js) */
+  #roomViewSpacer {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+  }
+
+  #roomView.docked {
+    position: fixed;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 25dvh;
+    z-index: 30;
+    cursor: pointer;
+  }
+
+  #roomView.docked > * { pointer-events: none; }
+
+  body.room-docked::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: calc(25dvh + 8px);
+    background: #333;
+    z-index: 29;
+  }
 }
 
 header {
