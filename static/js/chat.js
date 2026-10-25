@@ -121,7 +121,7 @@ msgImageEl.addEventListener("change", async () => {
   const file = msgImageEl.files[0];
   if (!file) return;
   try {
-    setPendingImage(await fileToWebpDataUrl(file));
+    setPendingImage(await fileToChatImageDataUrl(file));
   } catch {
     alert("画像として読み込めませんでした");
     msgImageEl.value = "";
@@ -139,7 +139,7 @@ textEl.addEventListener("paste", async e => {
   const file = item.getAsFile();
   if (!file) return;
   try {
-    setPendingImage(await fileToWebpDataUrl(file));
+    setPendingImage(await fileToChatImageDataUrl(file));
   } catch {
     alert("画像として読み込めませんでした");
   }
@@ -153,6 +153,9 @@ form.addEventListener("submit", async e => {
   if (!result) return;
   if (result.error === "not joined") { alert("入室してから発言してください"); return; }
   if (result.error === "not your seat") { alert(NOT_YOUR_SEAT_MESSAGE); return; }
+  // 失敗したのに入力を消すと送れたように見えてしまうので、入力と添付は残したまま知らせる
+  if (result.error === "invalid image") { alert("画像を送れませんでした。別の画像で試してみてください"); return; }
+  if (result.error) { alert("送信できませんでした"); return; }
   textEl.value = "";
   textEl.style.height = "auto";
   clearPendingImage();

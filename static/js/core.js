@@ -192,8 +192,9 @@ async function fileToDataUrl(file) {
   return canvas.toDataURL("image/png");
 }
 
-// チャット添付用。最大1600pxに縮小し、WebP品質50でエンコードする(画像でないファイルはthrow)
-async function fileToWebpDataUrl(file) {
+// チャット添付用。最大1600pxに縮小し、WebP品質50でエンコードする(画像でないファイルはthrow)。
+// SafariはcanvasでWebPを作れず黙ってPNGを返す(重いうえサーバーも受け付けない)ので、そのときはJPEGにする
+async function fileToChatImageDataUrl(file) {
   const bmp = await createImageBitmap(file);
   const MAX = 1600;
   const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
@@ -201,7 +202,8 @@ async function fileToWebpDataUrl(file) {
   canvas.width = Math.max(1, Math.round(bmp.width * scale));
   canvas.height = Math.max(1, Math.round(bmp.height * scale));
   canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/webp", 0.5);
+  const webp = canvas.toDataURL("image/webp", 0.5);
+  return webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/jpeg", 0.7);
 }
 
 // 書き込み系APIの共通処理。サーバーがvery easyモードのときは401が返るので、

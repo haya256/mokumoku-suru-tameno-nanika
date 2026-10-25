@@ -50,7 +50,8 @@ def message_image(image_id):
     data = message_images.get(image_id)
     if not data:
         return jsonify({"error": "not found"}), 404
-    return Response(data, mimetype="image/webp",
+    # SafariからはJPEGが届くので、パスの .webp は旧来の形のままmimeは中身から決める
+    return Response(data, mimetype=sniff_image_mime(data) or "image/webp",
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 

@@ -11,6 +11,7 @@ from datetime import datetime
 
 from mokumoku import net, settings, state
 from mokumoku.kinds.youtube import YOUTUBE_ID_PATTERN
+from mokumoku.media import sniff_image_mime
 
 PROTOCOL = "mokumoco-world"
 VERSION = "1.0"
@@ -50,7 +51,9 @@ def _occupant(entry):
 def _message(m):
     image = None
     if m.get("image"):
-        image = {"url": f"/message-image/{m['image']}.webp", "mime": "image/webp"}
+        # SafariからのJPEGもあるので中身から決める。旧型ピアはWebPしか中継しないため、JPEGは相手に出ない
+        data = state.message_images.get(m["image"])
+        image = {"url": f"/message-image/{m['image']}.webp", "mime": (data and sniff_image_mime(data)) or "image/webp"}
     return {
         # システムメッセージはidを持たない時期があったので、tsから作って補う
         "id": m.get("id") or f"sys-{int(m.get('ts', 0) * 1000)}",

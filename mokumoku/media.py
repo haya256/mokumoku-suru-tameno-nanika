@@ -34,15 +34,20 @@ def decode_chara_image(image):
         return None
     return raw
 
-# クライアントがcanvasで縮小・WebP化したデータURLを検証してWebPバイト列を返す。不正ならNone
+# クライアントがcanvasで縮小・WebP化したデータURLを検証してバイト列を返す。不正ならNone。
+# SafariはcanvasでWebPを作れずJPEGで送ってくるので、JPEGも受け付ける(申告と中身が一致するときだけ)
+CHAT_IMAGE_MIMES = ("image/webp", "image/jpeg")
+
 def decode_chat_image(image):
-    prefix = "data:image/webp;base64,"
-    if not isinstance(image, str) or not image.startswith(prefix) or len(image) > MAX_CHAT_IMAGE_B64:
+    if not isinstance(image, str) or len(image) > MAX_CHAT_IMAGE_B64:
+        return None
+    mime = next((m for m in CHAT_IMAGE_MIMES if image.startswith(f"data:{m};base64,")), None)
+    if not mime:
         return None
     try:
-        raw = base64.b64decode(image[len(prefix):], validate=True)
+        raw = base64.b64decode(image[len(f"data:{mime};base64,"):], validate=True)
     except (ValueError, binascii.Error):
         return None
-    if not is_webp(raw):
+    if sniff_image_mime(raw) != mime:
         return None
     return raw

@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from conftest import ADMIN_PASSPHRASE, PASSPHRASE
+from conftest import ADMIN_PASSPHRASE, FAKE_JPEG, PASSPHRASE
 from mokumoku import peers, state
 from mokumoku.areas import MAX_AREAS
 
@@ -117,6 +117,31 @@ def test_kicked_seat_is_revoked(client):
 
 
 FAKE_WEBP = b"RIFF\x00\x00\x00\x00WEBPfake"
+
+
+def _data_url(mime, raw):
+    import base64
+    return f"data:{mime};base64," + base64.b64encode(raw).decode()
+
+
+# SafariはcanvasでWebPを作れないのでJPEGで送ってくる。中身に合わせたContent-Typeで返す
+def test_chat_image_accepts_jpeg(client):
+    seat = join_seat(client)
+    msg = post_message(client, seat=seat, text="", image=_data_url("image/jpeg", FAKE_JPEG)).get_json()
+    res = client.get(f"/message-image/{msg['image']}.webp")
+    assert res.status_code == 200 and res.mimetype == "image/jpeg"
+    msg = post_message(client, seat=seat, text="", image=_data_url("image/webp", FAKE_WEBP)).get_json()
+    assert client.get(f"/message-image/{msg['image']}.webp").mimetype == "image/webp"
+
+
+@pytest.mark.parametrize("mime,raw", [
+    ("image/png", b"\x89PNG\r\n\x1a\nfake"),  # PNGは重いので受け付けない
+    ("image/jpeg", FAKE_WEBP),               # 申告と中身が食い違う
+])
+def test_chat_image_rejects_other_formats(client, mime, raw):
+    seat = join_seat(client)
+    res = post_message(client, seat=seat, text="", image=_data_url(mime, raw))
+    assert res.status_code == 400 and res.get_json()["error"] == "invalid image"
 
 
 def test_admin_delete_message(client):
