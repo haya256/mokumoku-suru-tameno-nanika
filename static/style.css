@@ -899,11 +899,11 @@ body {
   padding-bottom: 0%;
 }
 
-/* 縮小表示のマスでは名前バッジが部屋に対して大きすぎるので、拡大したマスだけで出す
+/* 縮小表示のマスでは名前バッジが部屋に対して大きすぎるので、拡大したマスだけで出す(上部に小さく固定中は出さない)
    (バッジは絶対配置(745行)で.cellのflexレイアウトに参加しないので、ここでの
    padding調整は不要) */
 .cell .badge { display: none; }
-.tile.focused .cell .badge { display: block; }
+#roomView:not(.docked) .tile.focused .cell .badge { display: block; }
 
 /* キャラクターのスプライトシート: 9列×6行。1キャラ=3列×2行(6ポーズ)のブロックが部屋と同じ3×3配置。
    #charaStatusPortrait(ステータスウィンドウの肖像)は同じクロップ技術を大きいサイズで使い回すため
@@ -982,17 +982,18 @@ body {
 .bubble::before { top: 100%; border-width: 5px 4px 0; border-top-color: #555; }
 .bubble::after { top: calc(100% - 1px); border-width: 4px 3px 0; border-top-color: #fff; }
 
-/* ワールドマップ(縮小表示)では本文を出さず「…」だけ。拡大したマスだけで本文を出す */
+/* ワールドマップ(縮小表示)では本文を出さず「…」だけ。拡大したマスだけで本文を出す。
+   スマホで部屋を上部に小さく固定しているあいだ(.docked)は、拡大中でも縮小表示と同じ扱いにする */
 .bubble-text { display: none; }
-.tile.focused .bubble-dots { display: none; }
-.tile.focused .bubble {
+#roomView:not(.docked) .tile.focused .bubble-dots { display: none; }
+#roomView:not(.docked) .tile.focused .bubble {
   padding: 4px 8px;
   border-radius: 10px;
   font-size: 0.8rem;
   line-height: 1.35;
 }
 /* 収まらない長さのセリフは3行目の末尾を「…」にして打ち切る。改行はそのまま生かす */
-.tile.focused .bubble-text {
+#roomView:not(.docked) .tile.focused .bubble-text {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
