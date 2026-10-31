@@ -240,87 +240,105 @@ cat /var/log/tunnel_raw.log          # cloudflaredのログ
 venv/bin/aws ec2 describe-instances --filters "Name=tag:Name,Values=mokumoku-event" "Name=instance-state-name,Values=running"
 ```
 
-### 代替手段：VPS + Cloudflare Tunnel（手動・AWSを使いたくない場合）
+### 代替手段：VPS + Cloudflare Tunnel（AWSを使いたくない場合）
 
-AWSアカウントを作りたくない場合や、すでに自分のVPSを持っていて使い慣れている場合は、こちらの手動デプロイもできます。EC2自動化と違い、`server.py` と `cloudflared` の起動・停止は自分で行う必要があります。
+AWSアカウントを作りたくない場合や、すでに自分のVPSを持っていて使い慣れている場合は、VPSで動かすこともできます。`deploy/vps/` にある起動・停止のスクリプトを使います。EC2自動化と違い、サーバーの用意と、スクリプトの実行は自分で行います。
 
-- Python 3.x が入ったVPS（レンタルサーバー）（Mac / Linux / Windows(WSL)でも試せますが、**参加者を集めて実際に公開するならVPSを推奨**します。理由は後述）
-
-```bash
-# 1. このリポジトリを取得
-git clone https://github.com/haya256/mokumoku-suru-tameno-nanika.git
-cd mokumoku-suru-tameno-nanika
-
-# 2. Python の仮想環境を作って必要なライブラリを入れる（初回だけ）
-python3 -m venv venv
-venv/bin/pip install -r requirements.txt
-
-# 3. サーバーを起動
-venv/bin/python server.py
-```
-
-起動したら、ブラウザで http://localhost:5000 を開いて動作を確認してください。
-
-参加者にインターネット越しにアクセスしてもらう方法として、Cloudflare の「クイックトンネル」が使えます。アカウント登録なし・無料で、サーバーに一時的なURL（HTTPS付き）でアクセスできるようになります。
+- Python 3.x が入ったVPS（レンタルサーバー）。Ubuntu/Debian 系と AlmaLinux/RHEL 系を想定しています（Mac / Linux / Windows(WSL)でも試せますが、**参加者を集めて実際に公開するならVPSを推奨**します。理由は後述）
+- 参加者には、Cloudflare の「クイックトンネル」でアクセスしてもらいます。アカウント登録なし・無料で、一時的なURL（HTTPS付き）が発行されます
 
 > ⚠️ **自分の使っているパソコンで直接動かすのは非推奨です。** 万一このアプリに脆弱性があった場合、パソコンそのものがインターネットに直接晒される形になり、被害が他の作業データやブラウザのログイン状態などパソコン全体に及ぶ可能性があります。**参加者を集めて実際に使うときは、VPS（レンタルサーバー）上で動かしてください。** 何なら侵害されてもそのVPSだけの被害で済みます。
 
-#### VPS上で動かす場合
+#### 初回だけの準備
 
-VPSにSSHでログインした状態で実行します。`server.py`（アプリ本体）と `cloudflared`（公開用トンネル）の2つを起動しっぱなしにする必要があります。やり方は2パターンあるので、好みで選んでください。
-
-**パターンA: 2つのSSHセッションを開く（シンプル）**
-
-上の `venv/bin/python server.py` を実行したセッションをそのまま残しておき、**別のSSHセッションをもう1つ開いて**、以下を実行します。SSHセッションを閉じると両方止まるので、動作確認だけしたい・短時間だけ使う場合向けです。
+VPSにSSHでログインした状態で実行します。
 
 ```bash
-# 1. cloudflaredをインストール（初回だけ、Ubuntu/Debian系）
+# 1. このリポジトリを取得（置き場所はどこでも大丈夫です）
+git clone https://github.com/haya256/mokumoku-suru-tameno-nanika.git
+cd mokumoku-suru-tameno-nanika
+
+# 2. Python の仮想環境を作って必要なライブラリを入れる
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+```
+
+- 「ensurepipが無い」というエラーが出た場合（Ubuntu/Debian）は、`sudo apt install python3-venv` を実行してから作り直してください
+
+続けて、`cloudflared`（公開用トンネル）をインストールします。OSとCPUに合わせて、どれか1つを選んでください。CPUの種類は `uname -m` で分かります（`x86_64` か `aarch64`）。
+
+**Ubuntu/Debian 系（`x86_64`）**
+
+```bash
 curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
 sudo dpkg -i /tmp/cloudflared.deb
-
-# 2. トンネルを開始
-cloudflared tunnel --url http://localhost:5000
 ```
 
-**パターンB: nohup でバックグラウンド化（SSHセッション1つで完結、おすすめ）**
-
-`server.py` を `nohup` でバックグラウンドに回すと、SSHセッションを閉じてもサーバーが動き続けます。同じセッションのまま続けて `cloudflared` も起動できます。
+**Ubuntu/Debian 系（`aarch64`）**
 
 ```bash
-# 1. サーバーをバックグラウンドで起動
-nohup venv/bin/python server.py > server.log 2>&1 &
-disown
-
-# 2. 動いているか確認（HTMLが返ってくればOK）
-curl http://localhost:5000
-
-# 3. cloudflaredをインストール（初回だけ、Ubuntu/Debian系）
-curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb -o /tmp/cloudflared.deb
 sudo dpkg -i /tmp/cloudflared.deb
-
-# 4. トンネルを開始
-cloudflared tunnel --url http://localhost:5000
 ```
 
-- ログを見たいときは `tail -f server.log`
-- サーバーだけ止めたいときは `pkill -f server.py`
-
-少し待つと `https://ほにゃらら.trycloudflare.com` のようなURLが表示されます。これをそのまま参加者に伝えます（サーバーは`127.0.0.1`でしか待ち受けないので、ファイアウォールを開ける必要はありません）。
-
-終わったら、サーバーとトンネル両方のプロセスを止めます。
+**AlmaLinux/RHEL 系（`x86_64`）**
 
 ```bash
-ps aux | grep -E "server.py|cloudflared"
-kill <server.pyのPID> <cloudflaredのPID>
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-x86_64.rpm -o /tmp/cloudflared.rpm
+sudo dnf install -y /tmp/cloudflared.rpm
 ```
+
+**AlmaLinux/RHEL 系（`aarch64`）**
+
+```bash
+curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-aarch64.rpm -o /tmp/cloudflared.rpm
+sudo dnf install -y /tmp/cloudflared.rpm
+```
+
+入ったかどうかは `cloudflared --version` で確かめられます。
+
+最後に、**後述の「合言葉を設定する」を必ず設定してください。** クイックトンネルのURLは、知っていればインターネット上の誰でもアクセスできます。
+
+#### イベントごと：起動と終了
+
+リポジトリのフォルダで実行します。
+
+```bash
+# 起動（何も指定しなければ、4時間後に自動で止まります）
+deploy/vps/start.sh
+```
+
+少し待つと `参加者に伝えるURL: https://ほにゃらら.trycloudflare.com` と表示されます。これをそのまま参加者に伝えます。SSHを切っても動き続けます。
+
+```bash
+# 終わったら止める
+deploy/vps/stop.sh
+```
+
+自動で止まるまでの時間は、変えることもできます。
+
+```bash
+deploy/vps/start.sh 2h      # 2時間（ほかに 90s / 30m / 1.5h / 1d など。単位なしは秒）
+deploy/vps/start.sh none    # 時間制限なし（止め忘れると、公開されたままになります）
+```
+
+- 時間を指定して起動すると、画面に閉店時刻が表示されます（`config/closing_at.txt` に書かれます）。`stop.sh` で止めるか、`none` で起動し直すと消えます
+- すでに動いているときに `start.sh` を実行すると、何もせずに止まります。先に `stop.sh` を実行してください
+- `stop.sh` は、`start.sh` で起動したプロセスだけを止めます（同じVPSで動いている、ほかのトンネルなどは止めません）
+- ログは `run/server.log` と `run/cloudflared.log` に出ます（`tail -f run/server.log` で追いかけられます）。前回のログは、末尾が `.1` のファイルに1回分だけ残ります
+- URLが60秒たっても出ないときや、途中で止まったときは、ログの最後を表示して止まります
+- ポートを変えたいときは `PORT=5050 deploy/vps/start.sh` のようにします。サーバーは今までどおり `127.0.0.1` でしか待ち受けないので、ファイアウォールを開ける必要はありません
+- Discord に通知したいときは、後述の「Discord連携」を見てください
 
 知っておいてほしいこと：
 
-- URLは実行するたびに変わります。もくもく会のたびに新しいURLを伝えてください
-- インターネット上の誰でもURLさえ知ればアクセスできる状態になります。**後述の「合言葉を設定する」を必ず設定してから**URLを共有するのがおすすめです
-- `python3 -m venv venv` で「ensurepipが無い」というエラーが出た場合は、`sudo apt install python3.12-venv` を実行してから作り直してください
+- URLは起動するたびに変わります。もくもく会のたびに新しいURLを伝えてください
 - **データはサーバーを止めると消えます**（メモリ上にだけ保存しています）。1回のもくもく会ごとに使い切るイメージです
-- 止めるときはターミナルで `Ctrl+C` です。反応しない場合は `ps aux | grep server.py` でプロセスを探し、`kill <PID>` で止めてください
+- Mac で `start.sh` を時間指定つきで使うには、`timeout` コマンドが要ります（`brew install coreutils` で入ります）
+
+#### スクリプトを使わない場合
+
+何をしているか自分で確かめたいときは、手で起動することもできます。SSHのセッションを2つ開いて、1つ目で `venv/bin/python server.py`、2つ目で `cloudflared tunnel --url http://127.0.0.1:5000` を実行します。表示されたURLを参加者に伝え、終わったらそれぞれ `Ctrl+C` で止めます。SSHを切ると両方止まるので、動作確認や短時間で使う場合向けです。
 
 ---
 
@@ -507,6 +525,8 @@ venv/bin/python server.py
 ```
 
 EC2で起動する場合も同様に、`deploy/start_event.py` を実行する**前**に同じシェルで `export DISCORD_WEBHOOK_URL=...` しておけば、インスタンス起動時に自動で渡されます。
+
+VPSで `deploy/vps/start.sh` を使う場合も同じです。`start.sh` を実行する前に、同じシェルで `export DISCORD_WEBHOOK_URL=...` しておきます。毎回打つのが面倒なら、`config/discord.env` に `export DISCORD_WEBHOOK_URL=...` と書いておき、`. config/discord.env && deploy/vps/start.sh` のように読み込んでから起動すると楽です（`config/` は git に入りません）。
 
 > ⚠️ Webhook URL は秘密情報です。チャットなどに貼ると自動で無効化されることがあります。
 

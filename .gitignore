@@ -23,3 +23,6 @@ deploy/.current_instance
 .claude/
 
 .devcontainer/
+
+# deploy/vps/start.sh のPIDファイルとログ
+run/
