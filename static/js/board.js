@@ -29,6 +29,17 @@ function renderBoard(entries) {
     const div = document.createElement("div");
     div.className = local ? "entry" : "entry remote";
     div.innerHTML = `<span class="room">${esc(room)}</span><span class="who">${esc(e.name)}</span><span class="when">${esc(e.start)}〜${esc(e.end || "?")}</span><span class="what">${esc(e.task)}</span>`;
+    const zoomed = local && e.id === zoomId;
+    if (zoomed) div.classList.add("zoomed");
+    // ズームイン!は自分のルームの人間の参加者だけ(自分自身も可)。NPCと相手サーバーの人には出さない
+    if (local && isAdmin && !e.npc) {
+      const zoomBtn = document.createElement("button");
+      zoomBtn.type = "button";
+      zoomBtn.className = "zoom";
+      zoomBtn.textContent = zoomed ? "ズームイン！を解除" : "ズームイン";
+      zoomBtn.addEventListener("click", () => setZoom(zoomed ? { action: "out" } : { action: "in", id: e.id }));
+      div.appendChild(zoomBtn);
+    }
     // 相手サーバーの参加者は操作できないので強制退出ボタンは出さない。
     // NPCの片付けは強制退出とは別のライフサイクル(NPC管理パネル)で行うのでここには出さない
     if (local && isAdmin && e.id !== clientId && !e.npc) {

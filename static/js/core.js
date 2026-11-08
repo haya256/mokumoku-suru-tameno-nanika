@@ -61,6 +61,9 @@ let roomImageVersion = null;
 let pendingImageVersion = null; // ジッター待ち中のバージョン(同じ変化に対して二重にsetTimeoutしない)
 // ルームの見た目状態。normal以外なら自分のルームに演出オーバーレイを出す(renderWorld参照)
 let roomState = "normal";
+// ズームイン!中の在室者のクライアントID(/statusのzoomId)。nullなら解除中。
+// 自分のルームに居る間は、全員の画面でその人の部屋を建物いっぱいに広げる(renderWorld参照)
+let zoomId = null;
 // ブラウザのタブに出す絵文字(ルームの設定で変えられる)。表示直後の値はサーバーがindex.htmlに埋め込んで返す
 let roomFavicon = "";
 const faviconEl = document.getElementById("favicon");

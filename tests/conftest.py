@@ -50,5 +50,6 @@ def client(server):
     for store in (state.messages, state.board, state.seat_tokens, state.custom_images, state.npc_images,
                   state.message_images, state.area_images):
         store.clear()
+    state.zoom["id"] = None
     settings.update_settings(lambda s: s.setdefault("world", {}).update({"areas": []}))
     return server.app.test_client()

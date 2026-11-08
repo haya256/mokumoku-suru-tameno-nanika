@@ -73,8 +73,11 @@ async function poll() {
     areas = Array.isArray(world.areas) ? world.areas : [];
     // 拡大表示中のエリアが片付けられたらマップ表示に戻す
     if (focusedKey && focusedKey !== "self" && !areas.some(a => a.id === focusedKey)) focusedKey = null;
+    // ズームイン!の状態は在室者一覧のボタンと建物の描画の両方で使うので、renderBoardより先に受け取る
+    const status = await statusRes.json();
+    zoomId = typeof status.zoomId === "string" ? status.zoomId : null;
     renderBoard(await boardRes.json());
-    renderStatus(await statusRes.json());
+    renderStatus(status);
     render(mergedMessages());
   } catch {}
 }

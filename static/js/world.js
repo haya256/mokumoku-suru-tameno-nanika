@@ -313,6 +313,7 @@ function setTileImage(tile, area, ver) {
 // (.tile.empty のCSSはimg/overlay/label/statusしか隠さない)
 function resetTile(tile) {
   tile.key = null;
+  delete tile.el.dataset.zoomRoom;
   tile.lastState = "";
   tile.status.hidden = true;
   tile.roomStateOverlay.hidden = true;
@@ -323,7 +324,9 @@ function resetTile(tile) {
 
 function renderWorld() {
   // エリアが1つも無いときはマップにせず、今までどおり自分のルームを全画面で出す
-  const focus = areas.length === 0 ? "self" : focusedKey;
+  // ズームイン!中は、マップを見ていた人も自分のルームの全画面に切り替える(focusedKeyは残すので解除で元に戻る)
+  const zoomRoom = lastEntries.find(e => e.id === zoomId && !e.npc)?.room ?? null;
+  const focus = areas.length === 0 || zoomRoom !== null ? "self" : focusedKey;
   worldMapEl.classList.toggle("focus-mode", focus !== null);
   assignTiles().forEach((slot, i) => {
     const tile = tiles[i];
@@ -344,6 +347,9 @@ function renderWorld() {
     if (slot.self) {
       if (tile.img.getAttribute("src") !== selfRoomImageSrc) tile.img.src = selfRoomImageSrc;
       setClass(tile.el, `tile self${focused}`);
+      // その部屋だけを建物いっぱいに広げる(見せ方はCSS。セルを作り直さないのでアニメーションや再生は途切れない)
+      if (zoomRoom !== null) tile.el.dataset.zoomRoom = zoomRoom;
+      else delete tile.el.dataset.zoomRoom;
       tile.label.textContent = `${roomTitleEl.textContent}（このルーム）`;
       tile.status.hidden = true;
       renderRoomInto(tile, lastEntries, selfCharaUrl, null, visible, localMessages);
@@ -362,7 +368,7 @@ function renderWorld() {
     }
   });
   renderNowPlaying();
-  backToMapBtn.hidden = !(areas.length > 0 && focusedKey !== null);
+  backToMapBtn.hidden = !(areas.length > 0 && focusedKey !== null) || zoomRoom !== null;
 }
 
 function toggleTileFocus(tile) {

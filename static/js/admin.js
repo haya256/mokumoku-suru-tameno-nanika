@@ -21,6 +21,23 @@ async function checkAdmin() {
   syncAdminButtons();
 }
 
+// ズームイン!/解除。すぐ戻せる操作なので確認は出さない。全員の画面には次のpollで反映される
+async function setZoom(body) {
+  const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
+  try {
+    const res = await fetch("/admin/zoom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, passphrase, actorId: clientId }),
+    });
+    if (!res.ok) { alert("ズームイン！の切り替えに失敗しました"); return; }
+  } catch {
+    alert("ズームイン！の切り替えに失敗しました");
+    return;
+  }
+  await poll();
+}
+
 async function kickUser(id, name) {
   if (!confirm(`${name} を強制退出させますか？`)) return;
   const passphrase = localStorage.getItem("mokumoku-passphrase") || "";

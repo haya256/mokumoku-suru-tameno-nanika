@@ -905,6 +905,41 @@ body {
 .cell .badge { display: none; }
 #roomView:not(.docked) .tile.focused .cell .badge { display: block; }
 
+/* ズームイン!: 管理者が選んだ1部屋を、全員の画面で建物いっぱいに広げる(data-zoom-roomはrenderWorldが付ける)。
+   建物の画像・部屋セル・吹き出しは同じ3×3に重なっているので、画像はその部屋を起点に3倍にし
+   (はみ出した他の部屋は.tileのoverflow:hiddenで隠れる)、セルと吹き出しはその部屋だけを3×3いっぱいに置く。
+   キャラはセルに対する比率のままなので一緒に3倍になり、名前バッジや文字は普通の大きさのまま */
+.tile[data-zoom-room] > img { transform: scale(3); }
+.tile[data-zoom-room] .cell,
+.tile[data-zoom-room] .bubble-slot { display: none; grid-column: 1 / 4; grid-row: 1 / 4; }
+.tile[data-zoom-room="1"] > img { transform-origin: 0% 0%; }
+.tile[data-zoom-room="2"] > img { transform-origin: 50% 0%; }
+.tile[data-zoom-room="3"] > img { transform-origin: 100% 0%; }
+.tile[data-zoom-room="4"] > img { transform-origin: 0% 50%; }
+.tile[data-zoom-room="5"] > img { transform-origin: 50% 50%; }
+.tile[data-zoom-room="6"] > img { transform-origin: 100% 50%; }
+.tile[data-zoom-room="7"] > img { transform-origin: 0% 100%; }
+.tile[data-zoom-room="8"] > img { transform-origin: 50% 100%; }
+.tile[data-zoom-room="9"] > img { transform-origin: 100% 100%; }
+.tile[data-zoom-room="1"] .cell:nth-child(1) { display: flex; }
+.tile[data-zoom-room="1"] .bubble-slot:nth-child(1) { display: block; }
+.tile[data-zoom-room="2"] .cell:nth-child(2) { display: flex; }
+.tile[data-zoom-room="2"] .bubble-slot:nth-child(2) { display: block; }
+.tile[data-zoom-room="3"] .cell:nth-child(3) { display: flex; }
+.tile[data-zoom-room="3"] .bubble-slot:nth-child(3) { display: block; }
+.tile[data-zoom-room="4"] .cell:nth-child(4) { display: flex; }
+.tile[data-zoom-room="4"] .bubble-slot:nth-child(4) { display: block; }
+.tile[data-zoom-room="5"] .cell:nth-child(5) { display: flex; }
+.tile[data-zoom-room="5"] .bubble-slot:nth-child(5) { display: block; }
+.tile[data-zoom-room="6"] .cell:nth-child(6) { display: flex; }
+.tile[data-zoom-room="6"] .bubble-slot:nth-child(6) { display: block; }
+.tile[data-zoom-room="7"] .cell:nth-child(7) { display: flex; }
+.tile[data-zoom-room="7"] .bubble-slot:nth-child(7) { display: block; }
+.tile[data-zoom-room="8"] .cell:nth-child(8) { display: flex; }
+.tile[data-zoom-room="8"] .bubble-slot:nth-child(8) { display: block; }
+.tile[data-zoom-room="9"] .cell:nth-child(9) { display: flex; }
+.tile[data-zoom-room="9"] .bubble-slot:nth-child(9) { display: block; }
+
 /* キャラクターのスプライトシート: 9列×6行。1キャラ=3列×2行(6ポーズ)のブロックが部屋と同じ3×3配置。
    #charaStatusPortrait(ステータスウィンドウの肖像)は同じクロップ技術を大きいサイズで使い回すため
    ここに相乗りさせる(background-sizeが%指定なので要素サイズが変わってもクロップ結果は崩れない) */
@@ -1179,6 +1214,26 @@ header {
 
 .entry .kick:hover {
   background: #fee;
+}
+
+/* ズームイン!ボタン。強制退出(.kick)と同じ形で色違い。ズームイン中の人の行は背景で目立たせる */
+.entry .zoom {
+  flex-shrink: 0;
+  background: #fff;
+  color: #2a6fb0;
+  border: 1px solid #2a6fb0;
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.entry .zoom:hover {
+  background: #eef5fc;
+}
+
+.entry.zoomed {
+  background: #fff6d6;
 }
 
 /* 置き物NPC(時計・カレンダーなど)は行を分けず、横に詰めて並べる */

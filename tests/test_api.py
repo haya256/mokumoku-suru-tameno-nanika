@@ -205,6 +205,57 @@ def test_kick_requires_admin(client):
     assert client.get("/board").get_json() == []
 
 
+# --- ズームイン! ---
+
+def zoom_id(client):
+    return client.get("/status").get_json()["zoomId"]
+
+
+def test_zoom_requires_admin(client):
+    join(client)
+    assert client.post("/admin/zoom", json={"action": "in", "id": "u1", "passphrase": PASSPHRASE}).status_code == 403
+    assert zoom_id(client) is None
+
+
+def test_zoom_in_and_out(client):
+    join(client)
+    join(client, cid="u2", name="はなこ")
+    assert admin_post(client, "/admin/zoom", action="in", id="u2", actorId="u1").status_code == 200
+    assert zoom_id(client) == "u2"
+    assert "🔍 たろう（管理者）が はなこ にズームイン！しました" in system_texts(client)
+    # 別の人に切り替えられる
+    admin_post(client, "/admin/zoom", action="in", id="u1", actorId="u1")
+    assert zoom_id(client) == "u1"
+    assert admin_post(client, "/admin/zoom", action="out", actorId="u1").status_code == 200
+    assert zoom_id(client) is None
+    assert "🔍 たろう（管理者）が ズームイン！を解除しました" in system_texts(client)
+    # 解除中に解除しても何も起きない
+    before = len(system_texts(client))
+    admin_post(client, "/admin/zoom", action="out")
+    assert len(system_texts(client)) == before
+
+
+def test_zoom_rejects_missing_npc_and_bad_action(client):
+    assert admin_post(client, "/admin/zoom", action="in", id="nobody").status_code == 404
+    admin_post(client, "/admin/npc", action="add", kind="basic", name="NPC", task="見守り")
+    npc_id = next(e["id"] for e in client.get("/board").get_json() if e.get("npc"))
+    assert admin_post(client, "/admin/zoom", action="in", id=npc_id).status_code == 404
+    assert admin_post(client, "/admin/zoom", action="zoom").status_code == 400
+    assert zoom_id(client) is None
+
+
+@pytest.mark.parametrize("how", ["leave", "kick"])
+def test_zoom_clears_when_target_leaves(client, how):
+    seat = join_seat(client)
+    admin_post(client, "/admin/zoom", action="in", id="u1")
+    if how == "leave":
+        leave(client, seat=seat)
+    else:
+        admin_post(client, "/board/kick", id="u1")
+    assert zoom_id(client) is None
+    assert not any("解除" in t for t in system_texts(client))
+
+
 # --- エリア(ワールドマップ) ---
 
 AREA_CASES = [

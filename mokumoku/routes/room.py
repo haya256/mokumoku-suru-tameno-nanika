@@ -11,7 +11,7 @@ from mokumoku.auth import admin_label, check_passphrase, is_admin_passphrase, re
 from mokumoku.media import decode_chara_image, decode_chat_image
 from mokumoku.notify import add_system_message, discord_status, post_to_discord
 from mokumoku.settings import PASSPHRASE_MAX_LEN, ROOM_FAVICON_MAX_LEN, ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, closing_at, list_room_images, passphrase_file, read_secret_file, room_favicon, room_title, set_room_favicon_setting, set_room_image_setting, set_room_state_setting, set_room_title_setting, write_passphrase
-from mokumoku.state import _board_lock, board, bump_room_image_version, custom_images, message_images, messages, next_img_seq, pick_free_room, seat_tokens
+from mokumoku.state import _board_lock, board, bump_room_image_version, custom_images, message_images, messages, next_img_seq, pick_free_room, seat_tokens, zoom
 
 # 自分のルーム: チャット・入退室・管理者によるルームの見た目の操作
 bp = Blueprint("room", __name__)
@@ -25,7 +25,7 @@ ROOM_STATE_LABELS = {"preparing": "準備中", "closed": "Closed"}  # システ�
 def get_status():
     discord = discord_status()
     room_state = settings.load_settings().get("appearance", {}).get("room_state", "normal")
-    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title(), "favicon": room_favicon(), "closingAt": closing_at()})
+    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title(), "favicon": room_favicon(), "closingAt": closing_at(), "zoomId": zoom["id"]})
 
 @bp.route("/messages", methods=["GET"])
 def get_messages():
@@ -146,9 +146,39 @@ def kick_board():
     entry = board.pop(cid, None)
     custom_images.pop(cid, None)
     seat_tokens.pop(cid, None)
+    clear_zoom_if(cid)
     if entry:
         add_system_message(f"🚫 {entry['name']} が{admin_label(data)}によりルーム{entry['room']}から強制退室させられました")
     return jsonify({"ok": True})
+
+# ズームイン!: 管理者専用。選んだ在室者の部屋を、全員の画面で建物いっぱいに広げる(/statusのzoomIdで配る)。
+# 対象は自分のルームの人間の参加者だけ(NPCは対象外)。他サーバーには見せない(プロトコルには載せない)
+@bp.route("/admin/zoom", methods=["POST"])
+def admin_zoom():
+    data = request.get_json()
+    err = require_admin(data)
+    if err:
+        return err
+    action = data.get("action")
+    if action == "in":
+        cid = (data.get("id") or "").strip()
+        entry = board.get(cid)
+        if not entry or entry.get("npc") or not entry.get("name"):
+            return jsonify({"error": "not found"}), 404
+        zoom["id"] = cid
+        add_system_message(f"🔍 {admin_label(data)}が {entry['name']} にズームイン！しました")
+    elif action == "out":
+        if zoom["id"] is not None:
+            zoom["id"] = None
+            add_system_message(f"🔍 {admin_label(data)}が ズームイン！を解除しました")
+    else:
+        return jsonify({"error": "invalid action"}), 400
+    return jsonify({"ok": True, "zoomId": zoom["id"]})
+
+# 退室・強制退出した人がズームイン!の対象なら黙って解除する(退室のお知らせが出るので解除のお知らせは出さない)
+def clear_zoom_if(cid):
+    if zoom["id"] == cid:
+        zoom["id"] = None
 
 # 発言の削除: 管理者専用。跡形なく消す(置き換え表示やお知らせは出さない)。
 # 消せるのは自分のルームの参加者の発言だけで、システムメッセージは対象外。
@@ -271,6 +301,7 @@ def leave_board():
     entry = board.pop(cid, None)
     custom_images.pop(cid, None)  # 画像はその入室の間だけ有効
     seat_tokens.pop(cid, None)
+    clear_zoom_if(cid)
     if not entry:
         return jsonify({"ok": True})
     now = datetime.now()
