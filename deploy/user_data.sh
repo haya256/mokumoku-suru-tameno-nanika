@@ -2,6 +2,10 @@
 set -eu -o pipefail
 exec > /var/log/mokumoku_userdata.log 2>&1
 
+# 忘れて stop_event.py を実行し損ねても課金が続かないようにする保険(正規の停止手段は stop_event.py)。
+# 最初に予約する。最後に置くと、途中のどこかで失敗して set -e で止まったときに予約されないまま動き続ける
+shutdown -h +${AUTO_TERMINATE_MINUTES}
+
 apt-get update
 apt-get install -y python3-pip python3-venv git
 # AMI固定でupgradeしないため、Brotliの脆弱性(CVE-2026-111497)対策としてlibbrotli1だけは起動時に最新化する
@@ -36,6 +40,3 @@ for i in $$(seq 1 60); do
   fi
   sleep 1
 done
-
-# 忘れて stop_event.py を実行し損ねても課金が続かないようにする保険(正規の停止手段は stop_event.py)
-shutdown -h +${AUTO_TERMINATE_MINUTES}
