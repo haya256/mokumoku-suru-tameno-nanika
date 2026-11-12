@@ -5,7 +5,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from mokumoku import net, protocol_v1
-from mokumoku.areas import MAX_AREAS, load_areas
+from mokumoku.areas import MAX_AREAS, load_areas, update_area
 from mokumoku.kinds import AREA_KINDS
 from mokumoku.kinds.youtube import YOUTUBE_ID_PATTERN
 from mokumoku.media import PNG_MAGIC, is_webp, sniff_image_mime
@@ -32,6 +32,11 @@ FORK_SSE_MAX = 2_000_000  # SSEの最初の1イベントを読む際の上限バ
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str, "mime": str}
 peer_npc_images = {}    # (peer_id, npc_id) -> {"data": bytes, "version": 動画ID} (相手ルームのYouTube NPCのサムネ)
+# v1型ピアのDiscoveryを最後に確かめた時刻。相手が更新されてスナップショットのURLや巡回間隔の希望が
+# 変わることがあるので、ときどき取り直す(docs/world-protocol/versioning.md「版の選び方」)
+peer_discovered_at = {}  # peer_id -> 時刻
+DISCOVERY_REFRESH_SEC = 3600  # ふだんは1時間ごと
+DISCOVERY_RETRY_SEC = 300     # 取得に失敗している間は5分ごと(URLが変わって取れなくなった場合に早く直すため)
 peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(巡回間隔が長いfork型・v1型だけが使う)
 
 # fork型ピアの巡回間隔(秒)。settings.jsonのworld.fork_poll_interval_secで管理者が調整できる
@@ -70,6 +75,26 @@ def fetch_fork_snapshot(url):
                 return _json.loads(line[len(b"data:"):].strip().decode("utf-8"))
     raise ValueError("no snapshot event received")
 
+# v1型ピアのDiscoveryを、期限が来ていたら取り直す。変わっていれば設定(world.areas)にも保存して、
+# 新しい内容のピアを返す。取り直せなかった・変わっていなかったときは元のまま返す
+def rediscover_if_due(peer):
+    pid, now = peer["id"], time.time()
+    # 初めて見るピアは登録時(または前回の起動時)に確かめた直後とみなす
+    last = peer_discovered_at.setdefault(pid, now)
+    failing = peer_cache.get(pid, {}).get("ok") is False
+    if now - last < (DISCOVERY_RETRY_SEC if failing else DISCOVERY_REFRESH_SEC):
+        return peer
+    peer_discovered_at[pid] = now
+    found = protocol_v1.discover(peer["url"])
+    if not found:
+        return peer
+    fields = {"snapshot": found["snapshot"], "minPoll": found["minPoll"]}
+    if all(peer.get(k) == v for k, v in fields.items()):
+        return peer
+    update_area(pid, fields)
+    print(f"[peers] {peer.get('name') or peer['url']}: Discoveryの内容が変わったので更新")
+    return {**peer, **fields}
+
 # 失敗してもboard/messagesは前回値を残してok=Falseにするだけ。一瞬の通信断で
 # 相手の部屋から人が消えたように見えるのを避ける(クライアント側はグレーアウト表示にする)
 def refresh_peer(peer):
@@ -78,6 +103,7 @@ def refresh_peer(peer):
     try:
         if peer_type == "v1":
             # ワールド接続プロトコル v1(docs/world-protocol/)。スナップショット1回で全部取れる
+            peer = rediscover_if_due(peer)
             snapshot_url = peer.get("snapshot")
             if not snapshot_url:
                 raise ValueError("snapshot url missing")
@@ -158,6 +184,7 @@ def poll_peers_once():
     for pid in [p for p in peer_cache if p not in peer_ids]:
         peer_cache.pop(pid, None)
         peer_last_polled.pop(pid, None)
+        peer_discovered_at.pop(pid, None)
     for key in [k for k in peer_chara_images if k[0] not in peer_ids]:
         peer_chara_images.pop(key, None)
     for key in [k for k in peer_message_images if k[0] not in peer_ids]:

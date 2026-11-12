@@ -48,7 +48,8 @@ def server(tmp_path_factory):
 def client(server):
     from mokumoku import peers, settings, state
     for store in (state.messages, state.board, state.seat_tokens, state.custom_images, state.npc_images,
-                  state.message_images, state.area_images, peers.peer_cache, peers.peer_npc_images):
+                  state.message_images, state.area_images, peers.peer_cache, peers.peer_npc_images,
+                  peers.peer_discovered_at, peers.peer_last_polled):
         store.clear()
     state.zoom["id"] = None
     settings.update_settings(lambda s: s.setdefault("world", {}).update({"areas": []}))

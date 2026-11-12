@@ -291,3 +291,24 @@ def test_peer_youtube_npc_thumbnail_is_relayed(loopback):
     peers.poll_peers_once()
     assert not peers.peer_npc_images
     assert loopback.get(f"/peer-npc-image/{area['id']}/{npc['id']}").status_code == 404
+
+
+def test_v1_peer_rediscovers_when_due(loopback, monkeypatch):
+    # 相手が更新されてスナップショットのURLや巡回間隔の希望が変わったら、設定ごと追随する
+    area = add_peer(loopback)
+    peers.poll_peers_once()
+    found = {"snapshot": PEER_HOSTS[0] + protocol_v1.SNAPSHOT_PATH + "?moved=1", "minPoll": 30, "name": "x"}
+    monkeypatch.setattr(protocol_v1, "discover", lambda url: found)
+    # 期限が来るまでは取り直さない
+    peers.poll_peers_once()
+    assert peer_setting(area["id"])["minPoll"] != 30
+    peers.peer_discovered_at[area["id"]] -= peers.DISCOVERY_REFRESH_SEC
+    peers.poll_peers_once()
+    saved = peer_setting(area["id"])
+    assert (saved["snapshot"], saved["minPoll"]) == (found["snapshot"], 30)
+    assert peer_area(loopback, area["id"])["ok"] is True
+
+
+def peer_setting(area_id):
+    from mokumoku.areas import find_area
+    return find_area(area_id)
