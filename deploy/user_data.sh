@@ -5,6 +5,8 @@ exec > /var/log/mokumoku_userdata.log 2>&1
 # 忘れて stop_event.py を実行し損ねても課金が続かないようにする保険(正規の停止手段は stop_event.py)。
 # 最初に予約する。最後に置くと、途中のどこかで失敗して set -e で止まったときに予約されないまま動き続ける
 shutdown -h +${AUTO_TERMINATE_MINUTES}
+# 画面に「サーバー自動停止時刻」を出すための時刻(UNIX秒)。config/ ができてから書く
+CLOSING_AT=$$(( $$(date +%s) + ${AUTO_TERMINATE_MINUTES} * 60 ))
 
 apt-get update
 apt-get install -y python3-pip python3-venv git
@@ -22,6 +24,7 @@ mkdir -p config
 echo '${PASSPHRASE_B64}' | base64 -d > config/合言葉.txt
 echo '${ADMIN_PASSPHRASE_B64}' | base64 -d > config/管理者合言葉.txt
 echo '${SETTINGS_JSON_B64}' | base64 -d > config/settings.json
+echo "$$CLOSING_AT" > config/closing_at.txt
 
 export DISCORD_WEBHOOK_URL='${DISCORD_WEBHOOK_URL}'
 nohup venv/bin/python3 server.py > /var/log/mokumoku_server.log 2>&1 &

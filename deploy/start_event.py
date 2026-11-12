@@ -78,6 +78,9 @@ def main():
         SecurityGroupIds=[deploy["security_group_id"]],
         IamInstanceProfile={"Name": deploy["iam_instance_profile_name"]},
         UserData=base64.b64encode(user_data.encode()).decode(),
+        # user_data.sh が予約する自動シャットダウンで、インスタンスを「停止」ではなく「終了(破棄)」させる。
+        # 停止のままだとディスクが残り、stop_event.py を実行するまでディスク代がかかり続ける
+        InstanceInitiatedShutdownBehavior="terminate",
         BlockDeviceMappings=[{
             "DeviceName": root_device_name,
             "Ebs": {"DeleteOnTermination": True},

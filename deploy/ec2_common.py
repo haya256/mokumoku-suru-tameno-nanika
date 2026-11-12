@@ -8,8 +8,10 @@ import boto3
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_FILE = os.path.join(REPO_ROOT, "config", "settings.json")
-PASSPHRASE_FILE = os.path.join(REPO_ROOT, "config", "合言葉.txt")
-ADMIN_PASSPHRASE_FILE = os.path.join(REPO_ROOT, "config", "管理者合言葉.txt")
+# 合言葉ファイルの既定の場所(リポジトリのルートからの相対パス)。mokumoku/settings.py の既定値と同じ。
+# インスタンス上では user_data.sh が必ずこの場所に書く
+DEFAULT_PASSPHRASE_FILE = "config/合言葉.txt"
+DEFAULT_ADMIN_PASSPHRASE_FILE = "config/管理者合言葉.txt"
 STATE_FILE = os.path.join(REPO_ROOT, "deploy", ".current_instance")
 USER_DATA_TEMPLATE = os.path.join(REPO_ROOT, "deploy", "user_data.sh")
 
@@ -45,11 +47,21 @@ def read_optional(path):
     except OSError:
         return ""
 
+# 手元の合言葉は、サーバーと同じく settings.json の security.passphrase_file / admin_passphrase_file が
+# 指す場所から読む(未指定なら既定の場所)。インスタンスに渡す settings.json では、この2つを既定の場所に
+# 書き換える。user_data.sh が合言葉を書くのは既定の場所なので、そのまま渡すと場所が食い違って
+# 合言葉なしで入室できる状態になってしまう
 def load_secrets():
-    passphrase_text = read_optional(PASSPHRASE_FILE)
-    admin_passphrase_text = read_optional(ADMIN_PASSPHRASE_FILE)
     with open(CONFIG_FILE, encoding="utf-8") as f:
-        settings_json_text = f.read()
+        settings = json.load(f)
+    security = settings.get("security") if isinstance(settings.get("security"), dict) else {}
+    passphrase_text = read_optional(
+        os.path.join(REPO_ROOT, security.get("passphrase_file") or DEFAULT_PASSPHRASE_FILE))
+    admin_passphrase_text = read_optional(
+        os.path.join(REPO_ROOT, security.get("admin_passphrase_file") or DEFAULT_ADMIN_PASSPHRASE_FILE))
+    shipped = {**settings, "security": {**security, "passphrase_file": DEFAULT_PASSPHRASE_FILE,
+                                        "admin_passphrase_file": DEFAULT_ADMIN_PASSPHRASE_FILE}}
+    settings_json_text = json.dumps(shipped, ensure_ascii=False, indent=2)
     discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
     return passphrase_text, admin_passphrase_text, settings_json_text, discord_webhook_url
 

@@ -143,7 +143,10 @@ if [ -n "$LIMIT_SECONDS" ]; then
 else
     echo "時間制限なしで動いています。終わったら必ず deploy/vps/stop.sh で止めてください"
 fi
-if [ ! -s "config/合言葉.txt" ]; then
-    echo "注意: 合言葉(config/合言葉.txt)が未設定です。URLを知っている人は誰でも書き込めます"
+# 合言葉ファイルの場所は settings.json で変えられるので、サーバーと同じ読み方で確かめる
+PASS_FILE="$(venv/bin/python -c 'from mokumoku.settings import passphrase_file; print(passphrase_file())' 2>/dev/null | tail -n 1 || true)"
+[ -n "$PASS_FILE" ] || PASS_FILE="config/合言葉.txt"
+if [ ! -s "$PASS_FILE" ]; then
+    echo "注意: 合言葉($PASS_FILE)が未設定です。URLを知っている人は誰でも書き込めます"
 fi
 echo "ログ: $SERVER_LOG / $TUNNEL_LOG"
