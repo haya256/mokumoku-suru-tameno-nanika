@@ -92,7 +92,6 @@ def room_title():
     title = load_settings().get("appearance", {}).get("title")
     return title.strip() if isinstance(title, str) and title.strip() else DEFAULT_ROOM_TITLE
 
-# ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
 # 閉店時刻(UNIX秒)。ファイルが無い・中身が壊れている・すでに過ぎている場合はNone。
 # 起動シェルが書くファイルなので、settingsと同じく毎回読み直す
 def closing_at():
@@ -103,6 +102,7 @@ def closing_at():
         return None
     return value if value > time.time() else None
 
+# ファイルの中身を返す。未設置/空ならNone(hmac.compare_digestに渡す前提なので空文字とは区別する)
 def read_secret_file(path):
     try:
         with open(path, encoding="utf-8") as f:

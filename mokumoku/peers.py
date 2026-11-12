@@ -30,7 +30,7 @@ FORK_SSE_MAX = 2_000_000  # SSEの最初の1イベントを読む際の上限バ
 # v1型のピアは media(中継してよい画像URLの一覧)と roomImage({"url","version"}|None)も持つ
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str, "mime": str}
-peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(fork型のみ使う)
+peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(巡回間隔が長いfork型・v1型だけが使う)
 
 # fork型ピアの巡回間隔(秒)。settings.jsonのworld.fork_poll_interval_secで管理者が調整できる
 # (再起動不要)。ネイティブ型より短くして相手に負担をかけないよう、下限をPEER_POLL_INTERVALに丸める

@@ -171,7 +171,7 @@ function roomSettingsSection(heading, ...items) {
   return section;
 }
 
-// 入力欄+ボタンの1行フォーム(タイトル・参加者合言葉で共用)
+// 入力欄+ボタンの1行フォーム(タイトル・ファビコン・参加者合言葉で共用)
 function buildRoomTextForm(value, maxLength, onApply, buttonLabel = "変更") {
   const input = document.createElement("input");
   input.type = "text";
@@ -334,8 +334,6 @@ async function applyRoomState(state) {
 
 const AREA_ERRORS = {
   "invalid url": "URLの形式が正しくありません(https://から始まる有効なURLを入力してください)",
-  "invalid video": "YouTubeの動画URLとして読み取れませんでした",
-  "video unavailable": "その動画の情報を取得できませんでした(限定公開・削除済みかもしれません)",
   "area limit reached": "マップに置けるのは8マスまでです",
   "not found": "そのエリアは見つかりませんでした",
   "admin required": "管理者合言葉が必要です",
@@ -415,7 +413,7 @@ function buildAreaAddForm() {
   urlInput.type = "text";
   const nameInput = document.createElement("input");
   nameInput.type = "text";
-  // 接続方式の選択(ピアの通常/Redis版など)。選択肢を持つ種別のときだけ出す
+  // 接続方式の選択(ピアの自動判別/v1/旧方式/Redis版)。選択肢を持つ種別のときだけ出す
   const typeSelect = document.createElement("select");
   const addBtn = document.createElement("button");
   addBtn.type = "button";

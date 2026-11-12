@@ -123,7 +123,6 @@ def join_board():
         admin_suffix = "（管理者）" if is_admin_passphrase((data.get("passphrase") or "").strip()) else ""
         until = f"〜{end}" if end else "〜"
         add_system_message(f"🟢 {name}{admin_suffix} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
-    if is_new:
         seat_tokens[cid] = secrets.token_urlsafe(16)
         return jsonify({**board[cid], "seatToken": seat_tokens[cid]}), 201
     return jsonify(board[cid]), 201
@@ -233,15 +232,15 @@ def admin_set_room_state():
     err = require_admin(data)
     if err:
         return err
-    state = (data.get("state") or "").strip()
-    if state not in ROOM_STATES:
+    new_state = (data.get("state") or "").strip()
+    if new_state not in ROOM_STATES:
         return jsonify({"error": "invalid state"}), 400
-    set_room_state_setting(state)
-    if state == "normal":
+    set_room_state_setting(new_state)
+    if new_state == "normal":
         add_system_message(f"💡 {admin_label(data)}がルームの状態を通常に戻しました")
     else:
-        add_system_message(f"🚪 {admin_label(data)}がルームを「{ROOM_STATE_LABELS[state]}」にしました")
-    return jsonify({"ok": True, "state": state})
+        add_system_message(f"🚪 {admin_label(data)}がルームを「{ROOM_STATE_LABELS[new_state]}」にしました")
+    return jsonify({"ok": True, "state": new_state})
 
 # タイトル変更の実行: 画面上部とブラウザのタブに出る名前。settings.jsonに残るので次回起動時もこのタイトルで始まる
 @bp.route("/admin/room-title", methods=["POST"])

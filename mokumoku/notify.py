@@ -5,6 +5,7 @@ import time
 import urllib.request
 from datetime import datetime
 
+from mokumoku import net
 from mokumoku.state import messages
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -25,11 +26,11 @@ def post_to_discord(content):
     req = urllib.request.Request(
         DISCORD_WEBHOOK_URL,
         data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": "mokumoku-bot/1.0"},
+        headers={"Content-Type": "application/json", "User-Agent": net.USER_AGENT},
         method="POST",
     )
     try:
-        urllib.request.urlopen(req, timeout=5)
+        urllib.request.urlopen(req, timeout=net.TIMEOUT)
         discord_last_ok = True
     except Exception as e:
         discord_last_ok = False
