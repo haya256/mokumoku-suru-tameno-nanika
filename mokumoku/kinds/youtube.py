@@ -12,7 +12,7 @@ YOUTUBE_THUMB_MAX = 1_000_000  # 実測で最大のmaxresdefaultでも100KB弱�
 # 大きい順に試し、maxresdefault(1280x720)が無ければmqdefault(320x180)に落とす
 YOUTUBE_THUMB_NAMES = ("maxresdefault.jpg", "mqdefault.jpg")
 
-# YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/)、または生の動画IDから11文字のIDを取り出す。
+# YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/, live/)、または生の動画IDから11文字のIDを取り出す。
 # クライアントのextractYouTubeId()と同じ判定をサーバー側でもやる(クライアントの検証は当てにしない)
 def extract_youtube_id(value):
     value = (value or "").strip()

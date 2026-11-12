@@ -128,7 +128,7 @@ function appendLinkedText(el, text) {
   return videoId;
 }
 
-// YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/)から11文字の動画IDを取り出す。
+// YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/, live/)から11文字の動画IDを取り出す。
 // 該当しなければnull(埋め込みなし、リンクだけになる)
 function extractYouTubeId(url) {
   let u;
@@ -138,7 +138,7 @@ function extractYouTubeId(url) {
   if (host === "youtu.be") return idOk(u.pathname.slice(1));
   if (host === "youtube.com" || host === "youtube-nocookie.com") {
     if (u.pathname === "/watch") return idOk(u.searchParams.get("v") || "");
-    const m = u.pathname.match(/^\/(?:shorts|embed)\/([\w-]{11})/);
+    const m = u.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]{11})/);
     if (m) return idOk(m[1]);
   }
   return null;

@@ -162,11 +162,12 @@ function openStatusOnClick(el, o, portrait, tile, roomLabel) {
 }
 
 function selfCharaUrl(o) {
-  return `/chara-custom/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
+  return `/chara-custom/${encodeURIComponent(o.id)}.png?v=${encodeURIComponent(o.imgv)}`;
 }
 
 function peerCharaUrl(peerId) {
-  return o => `/peer-chara/${encodeURIComponent(peerId)}/${encodeURIComponent(o.id)}.png?v=${o.imgv}`;
+  // imgvは相手サーバーの値がそのまま届きうる。生で入れるとCSSのurl()を閉じて別のURLを足せてしまう
+  return o => `/peer-chara/${encodeURIComponent(peerId)}/${encodeURIComponent(o.id)}.png?v=${encodeURIComponent(o.imgv)}`;
 }
 
 const charaStatusOverlay = document.getElementById("charaStatusOverlay");
