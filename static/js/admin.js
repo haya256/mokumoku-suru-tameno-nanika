@@ -1,11 +1,20 @@
 // 管理者用の操作(強制退出・ルームの設定・ワールド設定・NPC管理)。
 // 表示・操作の可否はサーバーが都度合言葉で判定する。ここはボタンとパネルの出し入れだけ
 // 今保持している合言葉が管理者合言葉かどうかをサーバーに確認する(ボタン表示の判定用)
+// pollのたび(2秒ごと)に呼ばれるが、サーバーに聞くのは合言葉が変わったときと、1分おきの確かめ直しだけ。
+// 入室中の人は全員が合言葉を持っているので、毎回聞くと人数ぶんのPOSTが2秒ごとに飛んでしまう。
+// 確かめ直しは、管理者合言葉がサーバー側で変えられた・消されたときにボタンを片付けるため
+// (ボタンが残っていても、実行できるかどうかはサーバーが毎回判定する)
+const ADMIN_RECHECK_MS = 60000;
+let adminCheckedPassphrase = null;
+let adminCheckedAt = 0;
+
 async function checkAdmin() {
   const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
   if (!passphrase) {
     isAdmin = false;
-  } else {
+    adminCheckedPassphrase = null;
+  } else if (passphrase !== adminCheckedPassphrase || Date.now() - adminCheckedAt >= ADMIN_RECHECK_MS) {
     try {
       const res = await fetch("/admin/status", {
         method: "POST",
@@ -14,8 +23,10 @@ async function checkAdmin() {
       });
       const data = await res.json();
       isAdmin = !!data.isAdmin;
+      adminCheckedPassphrase = passphrase;
+      adminCheckedAt = Date.now();
     } catch {
-      isAdmin = false;
+      // 通信の一時的な失敗でボタンを消さない。次のpollでもう一度聞く
     }
   }
   syncAdminButtons();

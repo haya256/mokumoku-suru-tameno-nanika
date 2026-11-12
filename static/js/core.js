@@ -211,16 +211,33 @@ async function fileToChatImageDataUrl(file) {
 
 // 書き込み系APIの共通処理。サーバーがvery easyモードのときは401が返るので、
 // そこで初めて合言葉を聞いてlocalStorageに保存し再送する(noneモードでは一切聞かない)。
-// キャンセルまたは規定回数失敗ならnullを返す(呼び出し元は中断する)
+// キャンセルまたは規定回数失敗ならnullを返す(呼び出し元は中断する)。
+// 通信できなかったとき・サーバーがJSON以外(エラーページなど)を返したときも、黙って止まらないよう
+// 知らせてからnullを返す
 async function postJson(url, body) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const passphrase = localStorage.getItem("mokumoku-passphrase") || "";
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(passphrase ? { ...body, passphrase } : body),
-    });
-    if (res.status !== 401) return res.json();
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(passphrase ? { ...body, passphrase } : body),
+      });
+    } catch {
+      alert("サーバーと通信できませんでした。少し待ってからもう一度試してください");
+      return null;
+    }
+    if (res.status !== 401) {
+      try {
+        return await res.json();
+      } catch {
+        alert(res.status === 413
+          ? "送るデータが大きすぎます。画像を小さくするか、外して試してください"
+          : `サーバーでエラーが起きました(${res.status})。少し待ってからもう一度試してください`);
+        return null;
+      }
+    }
     localStorage.removeItem("mokumoku-passphrase");
     const input = (prompt(passphrase ? "合言葉が違います。もう一度入力してください" : "合言葉を入力してください") || "").trim();
     if (!input) return null;
