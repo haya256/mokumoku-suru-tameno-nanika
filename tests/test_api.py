@@ -466,3 +466,48 @@ def test_index_served(client, server, monkeypatch):
         assert "<title>もくもく会</title>" in res.get_data(as_text=True)
     finally:
         os.chdir(cwd)
+
+
+# 形のおかしいリクエスト(JSONでない・オブジェクトでない・文字列のはずが別の型)でも500にしない
+@pytest.mark.parametrize("endpoint", [
+    "/board/join", "/board/leave", "/board/kick", "/messages", "/admin/status", "/admin/zoom",
+    "/admin/message-delete", "/admin/room-images", "/admin/room-image", "/admin/room-state",
+    "/admin/room-title", "/admin/room-favicon", "/admin/room-passphrase", "/admin/areas",
+    "/admin/area", "/admin/npc",
+])
+@pytest.mark.parametrize("payload", [
+    None, [], "x", 1,
+    {"id": 1, "seat": [], "name": {}, "task": 2, "text": 3, "passphrase": ["a"], "actorId": 4, "action": 5},
+])
+def test_malformed_requests_are_not_500(client, endpoint, payload):
+    assert client.post(endpoint, json=payload).status_code < 500
+    assert client.post(endpoint, data="not json", content_type="text/plain").status_code < 500
+
+
+def test_malformed_fields_with_admin_are_not_500(client):
+    for endpoint, body in [
+        ("/admin/area", {"action": "add", "kind": "peer", "url": 1, "name": 2}),
+        ("/admin/area", {"action": "add", "kind": "browser", "url": [], "name": {}}),
+        ("/admin/area", {"action": "add", "kind": "youtube", "url": 1}),
+        ("/admin/area", {"action": "add", "kind": ["x"]}),
+        ("/admin/npc", {"action": "add", "kind": "basic", "name": 1, "task": 2, "image": 3}),
+        ("/admin/npc", {"action": "add", "kind": 1}),
+        ("/admin/zoom", {"action": "in", "id": 1}),
+        ("/admin/room-title", {"title": 1}),
+    ]:
+        assert admin_post(client, endpoint, **body).status_code < 500, (endpoint, body)
+
+
+def test_join_and_message_length_limits(client):
+    res = join(client, name="な" * 100 + "\nまえ", task="や" * 200)
+    entry = res.get_json()
+    assert len(entry["name"]) == 40 and len(entry["task"]) == 80
+    seat = entry["seatToken"]
+    assert post_message(client, seat=seat, text="あ" * 2000).status_code == 201
+    res = post_message(client, seat=seat, text="あ" * 2001)
+    assert res.status_code == 400 and res.get_json()["error"] == "text too long"
+    # 開始・終了時刻は HH:MM 以外を受け付けない(開始は今の時刻、終了は未定になる)
+    res = client.post("/board/join", json={"id": "u2", "name": "じろう", "task": "作業", "passphrase": PASSPHRASE,
+                                           "start": "x" * 1000, "end": "<b>"})
+    entry = res.get_json()
+    assert len(entry["start"]) == 5 and entry["end"] == ""

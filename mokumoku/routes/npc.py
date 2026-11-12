@@ -2,9 +2,10 @@ import random
 import secrets
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from mokumoku.auth import admin_label, require_admin
+from mokumoku.forms import json_body, text_field
 from mokumoku.kinds import NPC_KINDS, KindError
 from mokumoku.notify import add_system_message
 from mokumoku.routes.world import kind_error
@@ -17,13 +18,13 @@ bp = Blueprint("npc", __name__)
 # 種別ごとの検証は /admin/area と同じ kinds/ の prepare() を使う
 @bp.route("/admin/npc", methods=["POST"])
 def admin_npc():
-    data = request.get_json() or {}
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    action = (data.get("action") or "").strip()
+    action = text_field(data, "action")
     if action == "add":
-        kind = NPC_KINDS.get((data.get("kind") or "basic").strip())
+        kind = NPC_KINDS.get(text_field(data, "kind") or "basic")
         if kind is None:
             return jsonify({"error": "invalid kind"}), 400
         try:
@@ -51,7 +52,7 @@ def admin_npc():
         add_system_message(f"🤖 {admin_label(data)}がNPC「{prepared.name}」をルーム{room}に入室させました")
         return jsonify({"ok": True, "npc": board[cid], "embeddable": prepared.response.get("embeddable", True)}), 201
     if action == "remove":
-        cid = (data.get("id") or "").strip()
+        cid = text_field(data, "id")
         entry = board.get(cid)
         if not entry or not entry.get("npc"):
             return jsonify({"error": "not found"}), 404

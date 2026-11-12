@@ -191,6 +191,7 @@ form.addEventListener("submit", async e => {
   if (result.error === "not joined") { alert("入室してから発言してください"); return; }
   if (result.error === "not your seat") { alert(NOT_YOUR_SEAT_MESSAGE); return; }
   // 失敗したのに入力を消すと送れたように見えてしまうので、入力と添付は残したまま知らせる
+  if (result.error === "text too long") { alert("コメントが長すぎます(2000文字まで)"); return; }
   if (result.error === "invalid image") { alert("画像を送れませんでした。別の画像で試してみてください"); return; }
   if (result.error) { alert("送信できませんでした"); return; }
   textEl.value = "";

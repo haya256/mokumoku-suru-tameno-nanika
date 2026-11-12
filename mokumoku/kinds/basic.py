@@ -11,7 +11,7 @@ class BasicKind(Kind):
 
     def prepare(self, data):
         name = clean_name(data.get("name"))
-        task = clean_name(data.get("task"), 80)
+        task = clean_name(data.get("task"), 80)  # 長さは routes/room.py の TASK_MAX_LEN と揃える
         if not name or not task:
             raise KindError("name and task required")
         raw = None

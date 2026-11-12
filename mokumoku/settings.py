@@ -82,14 +82,15 @@ def set_room_favicon_setting(favicon):
         settings.setdefault("appearance", {})["favicon"] = favicon
     update_settings(mutate)
 
-# ブラウザのタブに出す絵文字。未設定/空なら既定の🏠
-def room_favicon():
-    favicon = load_settings().get("appearance", {}).get("favicon")
+# ブラウザのタブに出す絵文字。未設定/空なら既定の🏠。
+# 読み込み済みの設定があれば渡す(2秒ごとに呼ばれる/statusで同じファイルを何度も読まないため)
+def room_favicon(settings=None):
+    favicon = (settings if settings is not None else load_settings()).get("appearance", {}).get("favicon")
     return favicon.strip() if isinstance(favicon, str) and favicon.strip() else DEFAULT_ROOM_FAVICON
 
 # 画面上部・ブラウザのタブに出すタイトル。未設定/空なら既定の「もくもく会」
-def room_title():
-    title = load_settings().get("appearance", {}).get("title")
+def room_title(settings=None):
+    title = (settings if settings is not None else load_settings()).get("appearance", {}).get("title")
     return title.strip() if isinstance(title, str) and title.strip() else DEFAULT_ROOM_TITLE
 
 # 閉店時刻(UNIX秒)。ファイルが無い・中身が壊れている・すでに過ぎている場合はNone。

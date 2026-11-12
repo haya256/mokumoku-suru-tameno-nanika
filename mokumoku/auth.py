@@ -2,6 +2,7 @@ import hmac
 
 from flask import jsonify
 
+from mokumoku.forms import text_field
 from mokumoku.settings import DEFAULT_ADMIN_PASSPHRASE_FILE, load_settings, passphrase_file, read_secret_file
 from mokumoku.state import board, seat_tokens
 
@@ -16,7 +17,7 @@ def is_admin_passphrase(supplied):
 # 管理者操作のログに載せる実行者名。クライアントが送る actorId(自分のクライアントID)から入室中の名前を引く。
 # 見る専(未入室)などで名前が引けないときは「管理者」だけにする
 def admin_label(data):
-    entry = board.get(((data or {}).get("actorId") or "").strip())
+    entry = board.get(text_field(data, "actorId"))
     name = (entry or {}).get("name")
     return f"{name}（管理者）" if name else "管理者"
 
@@ -34,7 +35,7 @@ def check_passphrase(data):
     expected = read_secret_file(passphrase_file())
     if expected is None:
         return None
-    supplied = ((data or {}).get("passphrase") or "").strip()
+    supplied = text_field(data, "passphrase")
     if hmac.compare_digest(supplied.encode(), expected.encode()):
         return None
     if is_admin_passphrase(supplied):
@@ -44,7 +45,7 @@ def check_passphrase(data):
 
 # 管理者専用エンドポイントの入口。合言葉が違えば403応答を、正しければNoneを返す
 def require_admin(data):
-    supplied = ((data or {}).get("passphrase") or "").strip()
+    supplied = text_field(data, "passphrase")
     if not is_admin_passphrase(supplied):
         return jsonify({"error": "admin required"}), 403
     return None
@@ -54,8 +55,8 @@ def require_admin(data):
 # 合言葉は新規入室のときだけ確認し、入室後は入室証で本人確認する。
 # そのため管理者が合言葉を変えても、入室中の人は聞き直されずに続けられる
 def seat_entry(data):
-    cid = ((data or {}).get("id") or "").strip()
-    supplied = ((data or {}).get("seat") or "").strip()
+    cid = text_field(data, "id")
+    supplied = text_field(data, "seat")
     expected = seat_tokens.get(cid)
     if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
         return None

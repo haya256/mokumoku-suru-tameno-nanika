@@ -66,7 +66,8 @@ def _message(m):
 
 
 def snapshot():
-    appearance = settings.load_settings().get("appearance", {})
+    current = settings.load_settings()
+    appearance = current.get("appearance", {})
     # 部屋画像の版はファイル名と変更回数の組。変更回数は再起動で0に戻るので、ファイル名も混ぜて
     # 再起動の前後で別の画像が同じ版に見えないようにする
     image_file = os.path.basename(appearance.get("room_image") or "room-image-1.webp")
@@ -79,8 +80,8 @@ def snapshot():
         "generatedAt": time.time(),
         "space": {
             "type": "room9",
-            "title": settings.room_title(),
-            "favicon": settings.room_favicon(),
+            "title": settings.room_title(current),
+            "favicon": settings.room_favicon(current),
             "state": appearance.get("room_state", "normal"),
             "closingAt": settings.closing_at(),
             "image": {"url": "/room-image.webp", "version": f"{image_file}:{state.room_image_version}",

@@ -22,7 +22,7 @@ class Prepared:
 
 # 名前はシステムメッセージとDiscordにも載るので、改行を潰して長さを切る
 def clean_name(value, limit=40):
-    return " ".join((value or "").split())[:limit]
+    return " ".join(value.split())[:limit] if isinstance(value, str) else ""
 
 
 class Kind:

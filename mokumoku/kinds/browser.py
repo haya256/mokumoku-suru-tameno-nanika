@@ -8,7 +8,7 @@ from mokumoku.kinds.base import Kind, KindError, Prepared, clean_name
 
 # ブラウザ用。peerと違い任意のページを指すのでパス・クエリ・フラグメントを許可する
 def normalize_iframe_url(url):
-    url = (url or "").strip()
+    url = url.strip() if isinstance(url, str) else ""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None

@@ -51,11 +51,11 @@
     <div class="row" id="joinRow" style="display: none;">
       <div class="lines">
         <div class="row-line">
-          <input id="name" type="text" placeholder="もくもくネーム" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore>
+          <input id="name" type="text" placeholder="もくもくネーム" maxlength="40" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore>
           <span class="field"><label for="chara">キャラ画像(任意/未指定なら自動割当)</label><input id="chara" type="file" accept="image/*"></span>
         </div>
         <div class="row-line">
-          <input id="task" type="text" placeholder="もくもくする内容(ボードに載ります)">
+          <input id="task" type="text" maxlength="80" placeholder="もくもくする内容(ボードに載ります)">
           <span class="field"><label for="start">開始</label><input id="start" type="time"></span>
           <span class="field"><label for="end">終了予定</label><input id="end" type="time"></span>
         </div>
@@ -81,7 +81,7 @@
               <button type="button" id="attachImageItem" role="menuitem">🖼️ 画像を添付</button>
             </div>
           </span>
-          <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1"></textarea>
+          <textarea id="text" placeholder="コメント (Shift+Enterで改行)" rows="1" maxlength="2000"></textarea>
           <button type="submit">送信</button>
         </div>
       </div>

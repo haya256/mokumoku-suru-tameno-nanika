@@ -15,7 +15,7 @@ YOUTUBE_THUMB_NAMES = ("maxresdefault.jpg", "mqdefault.jpg")
 # YouTubeの各種URL形式(watch?v=, youtu.be/, shorts/, embed/, live/)、または生の動画IDから11文字のIDを取り出す。
 # クライアントのextractYouTubeId()と同じ判定をサーバー側でもやる(クライアントの検証は当てにしない)
 def extract_youtube_id(value):
-    value = (value or "").strip()
+    value = value.strip() if isinstance(value, str) else ""
     if not value:
         return None
     ok = lambda s: s if YOUTUBE_ID_PATTERN.fullmatch(s or "") else None

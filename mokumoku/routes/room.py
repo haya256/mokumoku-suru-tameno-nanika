@@ -1,13 +1,16 @@
 import os
 import random
+import re
 import secrets
 import time
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from mokumoku import settings, state
 from mokumoku.auth import admin_label, check_passphrase, is_admin_passphrase, require_admin, seat_entry
+from mokumoku.forms import json_body, text_field
+from mokumoku.kinds.base import clean_name
 from mokumoku.media import decode_chara_image, decode_chat_image
 from mokumoku.notify import add_system_message, discord_status, post_to_discord
 from mokumoku.settings import PASSPHRASE_MAX_LEN, ROOM_FAVICON_MAX_LEN, ROOM_IMAGE_DIR, ROOM_TITLE_MAX_LEN, closing_at, list_room_images, passphrase_file, read_secret_file, room_favicon, room_title, set_room_favicon_setting, set_room_image_setting, set_room_state_setting, set_room_title_setting, write_passphrase
@@ -20,12 +23,25 @@ bp = Blueprint("room", __name__)
 ROOM_STATES = ("normal", "preparing", "closed")
 ROOM_STATE_LABELS = {"preparing": "準備中", "closed": "Closed"}  # システムメッセージ表示用
 
+# 入室フォームと発言の長さの上限。名前とやることはNPC(kinds/basic.py)と同じ長さに揃える。
+# どれも全員の画面・つながった相手ルーム・Discordに流れるので、サーバー側でも必ず切る
+NAME_MAX_LEN = 40
+TASK_MAX_LEN = 80
+MESSAGE_MAX_LEN = 2000
+# 開始・終了時刻は画面の時刻入力が送る「HH:MM」だけを受け付ける(それ以外は未入力として扱う)
+CLOCK_PATTERN = re.compile(r"\d{1,2}:\d{2}")
+
+def clock_field(data, key):
+    value = text_field(data, key)
+    return value if CLOCK_PATTERN.fullmatch(value) else ""
+
 # Discord連携の現在状態: off=URL未設定 / on=設定済み / error=直近の送信が失敗(URL失効など)
 @bp.route("/status")
 def get_status():
     discord = discord_status()
-    room_state = settings.load_settings().get("appearance", {}).get("room_state", "normal")
-    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title(), "favicon": room_favicon(), "closingAt": closing_at(), "zoomId": zoom["id"]})
+    current = settings.load_settings()
+    room_state = current.get("appearance", {}).get("room_state", "normal")
+    return jsonify({"discord": discord, "roomImageVersion": state.room_image_version, "roomState": room_state, "title": room_title(current), "favicon": room_favicon(current), "closingAt": closing_at(), "zoomId": zoom["id"]})
 
 @bp.route("/messages", methods=["GET"])
 def get_messages():
@@ -33,15 +49,17 @@ def get_messages():
 
 @bp.route("/messages", methods=["POST"])
 def post_message():
-    data = request.get_json()
+    data = json_body()
     # 発言できるのは入室中の本人だけ(入室証で確認)。名前も送られてきた値ではなく入室時に登録した名前を使う。
     # NPCには入室証を発行しないので、NPCのidを名乗った発言もここで断られる
     entry = seat_entry(data)
     if not entry:
-        joined = ((data or {}).get("id") or "").strip() in board
+        joined = text_field(data, "id") in board
         return jsonify({"error": "not your seat" if joined else "not joined"}), 403
     name = entry["name"]
-    text = data.get("text", "").strip()
+    text = text_field(data, "text")
+    if len(text) > MESSAGE_MAX_LEN:
+        return jsonify({"error": "text too long"}), 400
     image = data.get("image")
     image_id = None
     if image:
@@ -75,8 +93,8 @@ def get_board():
 # board はクライアントID(ブラウザごとに固定)をキーに持つ。名前は表示用で変更可
 @bp.route("/board/join", methods=["POST"])
 def join_board():
-    data = request.get_json()
-    cid = ((data or {}).get("id") or "").strip()
+    data = json_body()
+    cid = text_field(data, "id")
     # 入室中の人の編集は入室証で本人確認する(合言葉は新規入室のときだけ)
     if cid in board:
         if not seat_entry(data):
@@ -85,12 +103,13 @@ def join_board():
         err = check_passphrase(data)
         if err:
             return err
-    name = (data.get("name") or "").strip()
-    task = (data.get("task") or "").strip()
+    # 改行を潰して長さを切る(名前はシステムメッセージにも載る)
+    name = clean_name(data.get("name"), NAME_MAX_LEN)
+    task = clean_name(data.get("task"), TASK_MAX_LEN)
     if not cid or not name or not task:
         return jsonify({"error": "id, name and task required"}), 400
-    start = (data.get("start") or "").strip() or datetime.now().strftime("%H:%M")
-    end = (data.get("end") or "").strip()
+    start = clock_field(data, "start") or datetime.now().strftime("%H:%M")
+    end = clock_field(data, "end")
     # 画像は任意。部屋を仮予約する前に検証する(後で断ると、名前のない仮予約が部屋をふさいだまま残る)
     image = data.get("image")
     raw = None
@@ -120,7 +139,7 @@ def join_board():
     imgv = custom_images.get(cid, {}).get("v", 0)
     board[cid] = {"id": cid, "name": name, "start": start, "end": end, "task": task, "room": room, "pose": pose, "imgv": imgv}
     if is_new:
-        admin_suffix = "（管理者）" if is_admin_passphrase((data.get("passphrase") or "").strip()) else ""
+        admin_suffix = "（管理者）" if is_admin_passphrase(text_field(data, "passphrase")) else ""
         until = f"〜{end}" if end else "〜"
         add_system_message(f"🟢 {name}{admin_suffix} がルーム{room}に入室してもくもく開始({start}{until}): {task}")
         seat_tokens[cid] = secrets.token_urlsafe(16)
@@ -131,17 +150,17 @@ def join_board():
 # 一致すればクライアント側で「強制退出」ボタンを表示する(実際の実行権限はkick側でも都度検証する)
 @bp.route("/admin/status", methods=["POST"])
 def admin_status():
-    data = request.get_json()
-    supplied = ((data or {}).get("passphrase") or "").strip()
+    data = json_body()
+    supplied = text_field(data, "passphrase")
     return jsonify({"isAdmin": is_admin_passphrase(supplied)})
 
 @bp.route("/board/kick", methods=["POST"])
 def kick_board():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    cid = (data.get("id") or "").strip()
+    cid = text_field(data, "id")
     entry = board.pop(cid, None)
     custom_images.pop(cid, None)
     seat_tokens.pop(cid, None)
@@ -154,13 +173,13 @@ def kick_board():
 # 対象は自分のルームの人間の参加者だけ(NPCは対象外)。他サーバーには見せない(プロトコルには載せない)
 @bp.route("/admin/zoom", methods=["POST"])
 def admin_zoom():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
     action = data.get("action")
     if action == "in":
-        cid = (data.get("id") or "").strip()
+        cid = text_field(data, "id")
         entry = board.get(cid)
         if not entry or entry.get("npc") or not entry.get("name"):
             return jsonify({"error": "not found"}), 404
@@ -184,11 +203,11 @@ def clear_zoom_if(cid):
 # 全員の画面・つながった相手ルームからは次のpollで消える。Discordに送った分は消せない
 @bp.route("/admin/message-delete", methods=["POST"])
 def admin_delete_message():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    mid = (data.get("id") or "").strip()
+    mid = text_field(data, "id")
     target = next((m for m in messages if mid and m.get("id") == mid and not m.get("system")), None)
     if target is None:
         return jsonify({"error": "not found"}), 404
@@ -202,7 +221,7 @@ def admin_delete_message():
 # 画像一覧と、参加者に伝えるための今の参加者合言葉を返す。画像バイト自体はroom_image_previewで別途取得させる
 @bp.route("/admin/room-images", methods=["POST"])
 def admin_room_images():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
@@ -213,11 +232,11 @@ def admin_room_images():
 # 画像変更の実行: 一覧取得の成否とは別に、実行時も毎回サーバー側で合言葉を検証する
 @bp.route("/admin/room-image", methods=["POST"])
 def admin_set_room_image():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    filename = (data.get("file") or "").strip()
+    filename = text_field(data, "file")
     if filename not in list_room_images():
         return jsonify({"error": "invalid file"}), 400
     set_room_image_setting(filename)
@@ -228,11 +247,11 @@ def admin_set_room_image():
 # ルームの状態変更の実行: 電気を消したような演出(準備中/Closed)をON/OFFする管理者専用操作
 @bp.route("/admin/room-state", methods=["POST"])
 def admin_set_room_state():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    new_state = (data.get("state") or "").strip()
+    new_state = text_field(data, "state")
     if new_state not in ROOM_STATES:
         return jsonify({"error": "invalid state"}), 400
     set_room_state_setting(new_state)
@@ -245,11 +264,11 @@ def admin_set_room_state():
 # タイトル変更の実行: 画面上部とブラウザのタブに出る名前。settings.jsonに残るので次回起動時もこのタイトルで始まる
 @bp.route("/admin/room-title", methods=["POST"])
 def admin_set_room_title():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    title = (data.get("title") or "").strip()
+    title = text_field(data, "title")
     if not title or len(title) > ROOM_TITLE_MAX_LEN:
         return jsonify({"error": "invalid title"}), 400
     set_room_title_setting(title)
@@ -260,11 +279,11 @@ def admin_set_room_title():
 # 「絵文字1つ」の厳密な判定は画面側に任せ(Intl.Segmenter)、ここでは空白・制御文字を含まないことと長さだけを見る
 @bp.route("/admin/room-favicon", methods=["POST"])
 def admin_set_room_favicon():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    favicon = (data.get("favicon") or "").strip()
+    favicon = text_field(data, "favicon")
     if not favicon or len(favicon) > ROOM_FAVICON_MAX_LEN or not favicon.isprintable() or any(c.isspace() for c in favicon):
         return jsonify({"error": "invalid favicon"}), 400
     set_room_favicon_setting(favicon)
@@ -276,11 +295,11 @@ def admin_set_room_favicon():
 # 合言葉そのものは閲覧自由のチャットに流さない(知った見る専の人が書き込めてしまうため)
 @bp.route("/admin/room-passphrase", methods=["POST"])
 def admin_set_room_passphrase():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    value = (data.get("value") or "").strip()
+    value = text_field(data, "value")
     if not value or len(value) > PASSPHRASE_MAX_LEN:
         return jsonify({"error": "invalid passphrase"}), 400
     if is_admin_passphrase(value):
@@ -291,8 +310,8 @@ def admin_set_room_passphrase():
 
 @bp.route("/board/leave", methods=["POST"])
 def leave_board():
-    data = request.get_json()
-    cid = ((data or {}).get("id") or "").strip()
+    data = json_body()
+    cid = text_field(data, "id")
     if cid not in board:
         return jsonify({"ok": True})
     if not seat_entry(data):

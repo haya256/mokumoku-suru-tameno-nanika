@@ -9,6 +9,7 @@ from mokumoku import net
 from mokumoku.state import messages
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+DISCORD_CONTENT_MAX = 2000
 # 直近のDiscord送信結果。None=未送信。URL失効(404)等に画面で気づけるように保持する
 discord_last_ok = None
 
@@ -22,7 +23,8 @@ def post_to_discord(content):
     global discord_last_ok
     if not DISCORD_WEBHOOK_URL:
         return
-    payload = _json.dumps({"content": content}).encode()
+    # Discordは2000文字を超える投稿を断るので、収まるように切る
+    payload = _json.dumps({"content": content[:DISCORD_CONTENT_MAX]}).encode()
     req = urllib.request.Request(
         DISCORD_WEBHOOK_URL,
         data=payload,

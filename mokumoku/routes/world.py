@@ -1,9 +1,10 @@
 import time
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from mokumoku.areas import MAX_AREAS, add_area, find_area, load_areas, remove_area, update_area
 from mokumoku.auth import admin_label, require_admin
+from mokumoku.forms import json_body, text_field
 from mokumoku.kinds import AREA_KINDS, KindError
 from mokumoku.notify import add_system_message
 from mokumoku.peers import peer_public_state
@@ -39,7 +40,7 @@ def get_world():
 # /world と違って相手ルームのURLも返す(管理画面で「どこにつないでいるか」を確かめるため)
 @bp.route("/admin/areas", methods=["POST"])
 def admin_areas():
-    data = request.get_json()
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
@@ -60,13 +61,13 @@ def cache_area_image(area_id, prepared):
 # 種別ごとの検証・文言は kinds/ 側に任せ、ここは保存とキャッシュとシステムメッセージだけを受け持つ
 @bp.route("/admin/area", methods=["POST"])
 def admin_area():
-    data = request.get_json() or {}
+    data = json_body()
     err = require_admin(data)
     if err:
         return err
-    action = (data.get("action") or "").strip()
+    action = text_field(data, "action")
     if action == "add":
-        kind = AREA_KINDS.get((data.get("kind") or "peer").strip())
+        kind = AREA_KINDS.get(text_field(data, "kind") or "peer")
         if kind is None:
             return jsonify({"error": "invalid kind"}), 400
         try:
@@ -83,7 +84,7 @@ def admin_area():
         return jsonify({"ok": True, "area": result["area"], **prepared.response})
     # 差し替えは中身(YouTubeなら動画)だけ。マスの位置(slot)は動かさない
     if action == "update":
-        area = find_area((data.get("id") or "").strip())
+        area = find_area(text_field(data, "id"))
         kind = AREA_KINDS.get((area or {}).get("kind"))
         if not kind or not kind.updatable:
             return jsonify({"error": "not found"}), 404
@@ -96,7 +97,7 @@ def admin_area():
         add_system_message(kind.updated_text(admin_label(data), prepared.name))
         return jsonify({"ok": True, **prepared.response})
     if action == "remove":
-        removed = remove_area((data.get("id") or "").strip())
+        removed = remove_area(text_field(data, "id"))
         if removed:
             kind = AREA_KINDS.get(removed.get("kind"))
             name = removed.get("name")

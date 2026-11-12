@@ -10,7 +10,7 @@ PEER_TYPES = ("auto", "v1", "native", "fork")
 # 受け付けるのはホストまでのURLだけ。パス付きは中継先URLの組み立てが壊れるので弾く。
 # schemeを絞るのは、取得した中身を参加者に中継する以上file:などを踏ませないため
 def normalize_peer_url(url):
-    url = (url or "").strip().rstrip("/")
+    url = url.strip().rstrip("/") if isinstance(url, str) else ""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None

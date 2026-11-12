@@ -9,5 +9,5 @@
     kinds/       エリア/NPCの種別ごとの定義(新しい種別はここに1ファイル足す)
     protocol_v1.py  ワールド接続プロトコル v1 の組み立て(仕様は docs/world-protocol/)
     routes/      URLごとの処理(room / world / npc / images / protocol)
-    net.py, media.py  外部取得と画像検証の小さな道具
+    net.py, media.py, forms.py  外部取得・画像検証・リクエスト読み取りの小さな道具
 """
