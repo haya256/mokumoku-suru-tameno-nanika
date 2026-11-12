@@ -1,44 +1,81 @@
 // チャット欄。自分のルームのチャットと、つながった相手ルームのチャットを1本の時系列で見せる
-let lastMsgSig = "";
+// 発言ごとのDOM要素を取っておき、増えた分だけ足して消えた分だけ外す。
+// 毎回すべて作り直すと、チャットに埋め込んだYouTubeが誰かの発言のたびに頭から再生し直しになり、
+// 発言がたまるほど描き直しも重くなる
+const msgEls = new Map(); // 発言のキー -> 要素
+let msgElsForAdmin = false; // 取ってある要素が管理者向け(削除ボタンつき)かどうか
+
+// 発言を見分けるキー。idを持たない旧版のピアの発言は、発信元・時刻・名前・本文で代用する
+function msgKey(m) {
+  const origin = m.from ? `p:${m.peerId}` : "l";
+  return m.id ? `${origin}:${m.id}` : `${origin}:${m.ts}:${m.name}:${m.text}`;
+}
+
+function buildMsgEl(m) {
+  const div = document.createElement("div");
+  // m.from はピア由来のときだけ入る発信元ルーム名
+  const from = m.from ? `<span class="from">${esc(m.from)}</span>` : "";
+  const remote = m.from ? " remote" : "";
+  if (m.system) {
+    div.className = `msg system${remote}`;
+    div.innerHTML = `<span class="stamp">${esc(m.time)}</span>${from}${esc(m.text)}`;
+    return div;
+  }
+  div.className = `msg${remote}`;
+  div.innerHTML = `<div class="meta">${from}<span>${esc(m.name)}</span> ${esc(m.time)}</div>`;
+  // 管理者は自分のルームの発言を削除できる(相手ルームの発言は相手の管理者の領分)
+  if (isAdmin && !m.from && m.id) {
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "delete";
+    delBtn.textContent = "削除";
+    delBtn.addEventListener("click", () => deleteMessage(m.id, m.name));
+    div.querySelector(".meta").appendChild(delBtn);
+  }
+  const textEl = document.createElement("div");
+  textEl.className = "text";
+  const videoId = appendLinkedText(textEl, String(m.text ?? ""));
+  div.appendChild(textEl);
+  if (videoId) div.appendChild(buildYouTubeEmbed(videoId));
+  if (m.image) div.appendChild(buildMsgImage(m));
+  return div;
+}
 
 function render(msgs) {
-  // マージ後は件数だけでは変化を判定できない(ピアの取得遅れで途中に挿入されうる)ため、
-  // 件数と末尾のタイムスタンプを繋げたシグネチャで比べる。
-  // 管理者になった・外れたときは削除ボタンを出し直すので、isAdminも含める
-  const sig = `${msgs.length}|${msgs.length ? msgs[msgs.length - 1].ts : 0}|${isAdmin}`;
-  if (sig === lastMsgSig) return;
-  lastMsgSig = sig;
-  messagesEl.innerHTML = "";
-  msgs.forEach(m => {
-    const div = document.createElement("div");
-    // m.from はピア由来のときだけ入る発信元ルーム名
-    const from = m.from ? `<span class="from">${esc(m.from)}</span>` : "";
-    const remote = m.from ? " remote" : "";
-    if (m.system) {
-      div.className = `msg system${remote}`;
-      div.innerHTML = `<span class="stamp">${esc(m.time)}</span>${from}${esc(m.text)}`;
-    } else {
-      div.className = `msg${remote}`;
-      div.innerHTML = `<div class="meta">${from}<span>${esc(m.name)}</span> ${esc(m.time)}</div>`;
-      // 管理者は自分のルームの発言を削除できる(相手ルームの発言は相手の管理者の領分)
-      if (isAdmin && !m.from && m.id) {
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "delete";
-        delBtn.textContent = "削除";
-        delBtn.addEventListener("click", () => deleteMessage(m.id, m.name));
-        div.querySelector(".meta").appendChild(delBtn);
-      }
-      const textEl = document.createElement("div");
-      textEl.className = "text";
-      const videoId = appendLinkedText(textEl, m.text);
-      div.appendChild(textEl);
-      if (videoId) div.appendChild(buildYouTubeEmbed(videoId));
-      if (m.image) div.appendChild(buildMsgImage(m));
-    }
-    messagesEl.appendChild(div);
+  // 管理者になった・外れたときは削除ボタンを出し直すので、そのときだけ全部作り直す
+  if (msgElsForAdmin !== isAdmin) {
+    msgElsForAdmin = isAdmin;
+    msgEls.clear();
+    messagesEl.innerHTML = "";
+  }
+  // 同じキーが重なったとき(idの無い発言で内容まで同じ場合)は通し番号で分ける
+  const seen = new Map();
+  const keyed = msgs.map(m => {
+    const base = msgKey(m);
+    const n = seen.get(base) || 0;
+    seen.set(base, n + 1);
+    return [n ? `${base}#${n}` : base, m];
   });
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  // 消えた発言(管理者による削除、相手ルームのスナップショットから外れた古い発言)を外す
+  const alive = new Set(keyed.map(([key]) => key));
+  for (const [key, el] of msgEls) {
+    if (!alive.has(key)) { el.remove(); msgEls.delete(key); }
+  }
+  // 並び順どおりに置く。すでにある要素は正しい位置にあれば触らない(動かすと埋め込みが読み込み直しになる)。
+  // ピアの取得遅れで途中に入る発言は、その位置に差し込む
+  let added = false;
+  let cursor = messagesEl.firstChild;
+  for (const [key, m] of keyed) {
+    let el = msgEls.get(key);
+    if (!el) {
+      el = buildMsgEl(m);
+      msgEls.set(key, el);
+      added = true;
+    }
+    if (el === cursor) cursor = cursor.nextSibling;
+    else messagesEl.insertBefore(el, cursor);
+  }
+  if (added) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // 自分のチャットとピアのチャットを1本の時系列にまとめる
