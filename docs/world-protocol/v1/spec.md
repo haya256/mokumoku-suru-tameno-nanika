@@ -314,7 +314,7 @@ v1.0 で定めるNPCの種類:
 |---|---|
 | Discovery | `GET /.well-known/mokumoco-world` |
 | スナップショット | `GET /world-api/v1/snapshot` |
-| `room9.image` | `/room-image.webp`(`version` は部屋画像を変えるたびに増える番号) |
+| `room9.image` | `/room-image.webp`(`version` は「画像のファイル名:変更回数」。変更回数は再起動で0に戻るのでファイル名と組にしている) |
 | `occupants[].avatar` | `/chara-custom/<id>.png`(カスタム画像が無い人は null) |
 | `messages[].image` | `/message-image/<id>.webp` |
 | `messages` の件数 | 新しいものから200件 |

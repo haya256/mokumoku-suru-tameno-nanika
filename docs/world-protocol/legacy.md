@@ -13,7 +13,7 @@ v1 ができる前から動いている接続方式の記録です。**新しく
 |---|---|
 | `/board` | 在室者の配列 `[{id, name, task, start, end, room, pose, imgv, npc?, kind?, videoId?, url?}]` |
 | `/messages` | 発言の配列 `[{id?, uid?, name, text, time, ts?, image?, system?}]`(全件、古い順) |
-| `/status` | `{roomImageVersion, roomState, title, favicon, closingAt, discord}` |
+| `/status` | `{roomImageVersion, roomState, title, favicon, closingAt, discord, zoomId}` |
 | `/room-image.webp` | 部屋の絵(WebP) |
 | `/chara-custom/<id>.png` | キャラの絵(PNG)。`imgv` が 0 なら無い |
 | `/message-image/<image>.webp` | チャット画像(WebP) |
