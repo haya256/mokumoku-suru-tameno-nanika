@@ -6,7 +6,8 @@ from flask import Blueprint, Response, jsonify, request, send_from_directory
 from mokumoku import net
 from mokumoku.areas import find_area, find_peer
 from mokumoku.media import PNG_MAGIC, is_webp, sniff_image_mime
-from mokumoku.peers import PEER_IMAGE_MAX, peer_cache, peer_chara_images
+from mokumoku.kinds.youtube import fetch_youtube_thumbnail
+from mokumoku.peers import PEER_IMAGE_MAX, peer_cache, peer_chara_images, peer_npc_images, peer_youtube_npc
 from mokumoku.settings import ROOM_IMAGE_DIR, list_room_images, load_settings
 from mokumoku.state import area_images, board, custom_images, message_images, npc_images, peer_message_images
 
@@ -77,6 +78,26 @@ def npc_image(npc_id):
     if not entry or not entry.get("npc") or not img:
         return jsonify({"error": "not found"}), 404
     return Response(img["data"], mimetype=img.get("mime", "image/jpeg"),
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Cache-Control": "public, max-age=86400"})
+
+# 相手ルームのYouTube NPCのサムネを中継。相手のサーバーには取りに行かず(旧方式にもv1にもサムネのURLは無い)、
+# 相手のboardに載っている動画IDからYouTubeのサムネを自サーバーが取ってくる。
+# 取りに行くのは「今その相手ルームに居るYouTube NPC」の動画だけ(任意の動画IDのプロキシにしない)
+@bp.route("/peer-npc-image/<peer_id>/<npc_id>")
+def peer_npc_image(peer_id, npc_id):
+    video_id = peer_youtube_npc(peer_id, npc_id) if find_peer(peer_id) else None
+    if not video_id:
+        return jsonify({"error": "not found"}), 404
+    cached = peer_npc_images.get((peer_id, npc_id))
+    if not cached or cached["version"] != video_id:
+        try:
+            data = fetch_youtube_thumbnail(video_id)
+        except Exception:
+            return jsonify({"error": "unavailable"}), 502
+        cached = {"data": data, "version": video_id}
+        peer_npc_images[(peer_id, npc_id)] = cached
+    return Response(cached["data"], mimetype="image/jpeg",
                     headers={"X-Content-Type-Options": "nosniff",
                              "Cache-Control": "public, max-age=86400"})
 

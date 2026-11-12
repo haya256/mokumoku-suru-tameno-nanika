@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from mokumoku import net, protocol_v1
 from mokumoku.areas import MAX_AREAS, load_areas
 from mokumoku.kinds import AREA_KINDS
+from mokumoku.kinds.youtube import YOUTUBE_ID_PATTERN
 from mokumoku.media import PNG_MAGIC, is_webp, sniff_image_mime
 from mokumoku.settings import load_settings
 from mokumoku.state import area_images, peer_message_images
@@ -30,6 +31,7 @@ FORK_SSE_MAX = 2_000_000  # SSEの最初の1イベントを読む際の上限バ
 # v1型のピアは media(中継してよい画像URLの一覧)と roomImage({"url","version"}|None)も持つ
 peer_cache = {}         # peer_id -> {"board": [...], "messages": [...], "roomImageVersion": int|str, "ok": bool}
 peer_chara_images = {}  # (peer_id, cid) -> {"data": bytes, "version": str, "mime": str}
+peer_npc_images = {}    # (peer_id, npc_id) -> {"data": bytes, "version": 動画ID} (相手ルームのYouTube NPCのサムネ)
 peer_last_polled = {}   # peer_id -> 最後に実際に取得を試みた時刻(巡回間隔が長いfork型・v1型だけが使う)
 
 # fork型ピアの巡回間隔(秒)。settings.jsonのworld.fork_poll_interval_secで管理者が調整できる
@@ -190,6 +192,19 @@ def poll_peers_once():
         # 応答しないピアが他のピアの鮮度を巻き添えにしないよう並列に取りに行く
         with ThreadPoolExecutor(max_workers=MAX_AREAS) as pool:
             list(pool.map(refresh_peer, targets))
+    # 相手ルームのYouTube NPCのサムネは、そのNPCが片付けられたら(または相手ごと外されたら)捨てる。
+    # 取ってきたばかりの在室者で判断するので、巡回のあとに行う
+    for key in [k for k in peer_npc_images if not peer_youtube_npc(*k)]:
+        peer_npc_images.pop(key, None)
+
+# 相手ルームに今いるYouTube NPCの動画ID。居ない・YouTubeでない・IDの形が不正ならNone。
+# 相手のboardは信用しない(旧方式は検証なしで届く)ので、IDの形はここで必ず確かめる
+def peer_youtube_npc(peer_id, npc_id):
+    for entry in peer_cache.get(peer_id, {}).get("board") or []:
+        if isinstance(entry, dict) and entry.get("id") == npc_id and entry.get("kind") == "youtube":
+            video_id = entry.get("videoId")
+            return video_id if isinstance(video_id, str) and YOUTUBE_ID_PATTERN.fullmatch(video_id) else None
+    return None
 
 def peer_poll_loop():
     while True:

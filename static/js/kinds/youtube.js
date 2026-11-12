@@ -4,8 +4,12 @@
 // 再生中の管理(同時に鳴らせるのは1つだけ、など)は playback.js が受け持つ
 const VIDEO_EMBED_WARNING = "この動画は外部サイトへの埋め込みが許可されていない可能性があります。\nマスには置きましたが、参加者の画面で再生できないかもしれません。";
 
+// 相手ルームのNPC(o.peerIdあり)は自サーバーに居ないので、相手ルーム用の中継から引く
 function npcImageUrl(o) {
-  return `/npc-image/${encodeURIComponent(o.id)}?v=${encodeURIComponent(o.videoId || 0)}`;
+  const base = o.peerId
+    ? `/peer-npc-image/${encodeURIComponent(o.peerId)}/${encodeURIComponent(o.id)}`
+    : `/npc-image/${encodeURIComponent(o.id)}`;
+  return `${base}?v=${encodeURIComponent(o.videoId || 0)}`;
 }
 
 // ブラウン管テレビ風の枠(ベゼル・電源ランプ・脚)。中身の画面は呼び出し側が作って渡す

@@ -273,3 +273,21 @@ def test_peer_image_version_follows_fetched_image(monkeypatch):
     assert peers.peer_public_state("p1")["roomImageVersion"] == "old"
     state.area_images["p1"]["version"] = "new"
     assert peers.peer_public_state("p1")["roomImageVersion"] == "new"
+
+
+def test_peer_youtube_npc_thumbnail_is_relayed(loopback):
+    # 相手ルームのYouTube NPCは自サーバーのboardに居ないので、相手ルーム用の中継から絵を出す
+    npc = admin_post(loopback, "/admin/npc", action="add", kind="youtube",
+                     url="https://youtu.be/dQw4w9WgXcQ").get_json()["npc"]
+    area = add_peer(loopback)
+    peers.poll_peers_once()
+    res = loopback.get(f"/peer-npc-image/{area['id']}/{npc['id']}")
+    assert res.status_code == 200 and res.mimetype == "image/jpeg"
+    # 相手ルームに居ないNPCや、つないでいない相手の分は取りに行かない
+    assert loopback.get(f"/peer-npc-image/{area['id']}/npc-nope").status_code == 404
+    assert loopback.get(f"/peer-npc-image/nope/{npc['id']}").status_code == 404
+    # NPCが片付けられたら、次の巡回でキャッシュも捨てる
+    admin_post(loopback, "/admin/npc", action="remove", id=npc["id"])
+    peers.poll_peers_once()
+    assert not peers.peer_npc_images
+    assert loopback.get(f"/peer-npc-image/{area['id']}/{npc['id']}").status_code == 404

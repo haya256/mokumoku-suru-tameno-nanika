@@ -46,9 +46,9 @@ def server(tmp_path_factory):
 # テストごとにメモリ上の状態とエリア設定を空に戻す
 @pytest.fixture
 def client(server):
-    from mokumoku import settings, state
+    from mokumoku import peers, settings, state
     for store in (state.messages, state.board, state.seat_tokens, state.custom_images, state.npc_images,
-                  state.message_images, state.area_images):
+                  state.message_images, state.area_images, peers.peer_cache, peers.peer_npc_images):
         store.clear()
     state.zoom["id"] = None
     settings.update_settings(lambda s: s.setdefault("world", {}).update({"areas": []}))

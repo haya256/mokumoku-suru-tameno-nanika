@@ -70,6 +70,8 @@ function renderRoomInto(tile, entries, charaUrl, roomLabel, visible, messages) {
     start: String(e.start ?? ""), end: String(e.end ?? ""),
     pose: Math.min(2, Math.max(0, Math.trunc(e.pose) || 0)), imgv: e.imgv || 0,
     npc: !!e.npc, kind: e.kind || "basic", videoId: String(e.videoId ?? ""),
+    // 相手ルームの住人ならそのエリアのid(自分のルームならnull)。NPCの絵の参照先を切り替えるのに使う
+    peerId: tile.key === "self" ? null : tile.key,
   }));
   // 再生中のYouTube NPCが退室していたら再生状態を破棄する(次のポーリングで気づく)
   if (tile.playingNpcId && !occupants.some(o => o.id === tile.playingNpcId)) {
