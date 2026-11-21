@@ -134,6 +134,30 @@ def test_chat_image_accepts_jpeg(client):
     assert client.get(f"/message-image/{msg['image']}.webp").mimetype == "image/webp"
 
 
+# Discord連携中は、チャット画像も添付ファイルとしてDiscordに送る(文字だけの発言はJSONのまま)
+def test_chat_image_is_sent_to_discord(client, monkeypatch):
+    import json
+    import urllib.request
+    from mokumoku import notify
+    sent = []
+    monkeypatch.setattr(notify, "DISCORD_WEBHOOK_URL", "https://discord.example/api/webhooks/1/x")
+    monkeypatch.setattr(notify, "discord_last_ok", None)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: sent.append(req))
+    seat = join_seat(client)
+    sent.clear()  # 入室のお知らせの分
+    post_message(client, seat=seat, text="できた", image=_data_url("image/jpeg", FAKE_JPEG))
+    post_message(client, seat=seat, text="", image=_data_url("image/webp", FAKE_WEBP))
+    post_message(client, seat=seat, text="文字だけ")
+    jpeg, webp, text_only = sent
+    assert jpeg.get_header("Content-type").startswith("multipart/form-data; boundary=")
+    assert b'"content": "**\\u305f\\u308d\\u3046**: \\u3067\\u304d\\u305f"' in jpeg.data
+    assert b'filename="image.jpg"' in jpeg.data and FAKE_JPEG in jpeg.data
+    assert b'filename="image.webp"' in webp.data and FAKE_WEBP in webp.data
+    assert text_only.get_header("Content-type") == "application/json"
+    assert json.loads(text_only.data) == {"content": "**たろう**: 文字だけ"}
+    assert notify.discord_status() == "on"
+
+
 @pytest.mark.parametrize("mime,raw", [
     ("image/png", b"\x89PNG\r\n\x1a\nfake"),  # PNGは重いので受け付けない
     ("image/jpeg", FAKE_WEBP),               # 申告と中身が食い違う

@@ -83,7 +83,8 @@ def post_message():
     if image_id:
         msg["image"] = image_id
     messages.append(msg)
-    post_to_discord(f"**{name}**: {text}" if text else f"**{name}**: (画像)")
+    # 画像はDiscordにも添付して送る(Discordに流れた分は、ここで発言を消しても残る)
+    post_to_discord(f"**{name}**: {text}" if text else f"**{name}**:", message_images.get(image_id))
     return jsonify(msg), 201
 
 @bp.route("/board", methods=["GET"])

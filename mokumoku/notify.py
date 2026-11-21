@@ -6,6 +6,7 @@ import urllib.request
 from datetime import datetime
 
 from mokumoku import net
+from mokumoku.media import sniff_image_mime
 from mokumoku.state import messages
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -19,20 +20,48 @@ def discord_status():
         return "off"
     return "error" if discord_last_ok is False else "on"
 
-def post_to_discord(content):
+# Discordへ送る添付ファイルの名前。チャット画像はWebP/JPEGのどちらか(media.CHAT_IMAGE_MIMES)
+IMAGE_FILENAMES = {"image/webp": "image.webp", "image/jpeg": "image.jpg", "image/png": "image.png"}
+
+# 画像つきの投稿はmultipart/form-dataで送る(本文はpayload_json、画像はfiles[0])
+def _multipart(payload, image):
+    mime = sniff_image_mime(image) or "application/octet-stream"
+    filename = IMAGE_FILENAMES.get(mime, "image")
+    boundary = secrets.token_hex(16)
+    body = b"".join([
+        f"--{boundary}\r\n".encode(),
+        b'Content-Disposition: form-data; name="payload_json"\r\n',
+        b"Content-Type: application/json\r\n\r\n",
+        payload, b"\r\n",
+        f"--{boundary}\r\n".encode(),
+        f'Content-Disposition: form-data; name="files[0]"; filename="{filename}"\r\n'.encode(),
+        f"Content-Type: {mime}\r\n\r\n".encode(),
+        image, b"\r\n",
+        f"--{boundary}--\r\n".encode(),
+    ])
+    return body, f"multipart/form-data; boundary={boundary}"
+
+# imageはチャットに貼られた画像のバイト列(任意)。渡されたら添付ファイルとして一緒に送る
+def post_to_discord(content, image=None):
     global discord_last_ok
     if not DISCORD_WEBHOOK_URL:
         return
     # Discordは2000文字を超える投稿を断るので、収まるように切る
     payload = _json.dumps({"content": content[:DISCORD_CONTENT_MAX]}).encode()
+    if image:
+        data, content_type = _multipart(payload, image)
+    else:
+        data, content_type = payload, "application/json"
     req = urllib.request.Request(
         DISCORD_WEBHOOK_URL,
-        data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": net.USER_AGENT},
+        data=data,
+        headers={"Content-Type": content_type, "User-Agent": net.USER_AGENT},
         method="POST",
     )
+    # 画像を送るときは送信に時間がかかるので、待ち時間を長めにとる
+    timeout = net.TIMEOUT * 3 if image else net.TIMEOUT
     try:
-        urllib.request.urlopen(req, timeout=net.TIMEOUT)
+        urllib.request.urlopen(req, timeout=timeout)
         discord_last_ok = True
     except Exception as e:
         discord_last_ok = False
